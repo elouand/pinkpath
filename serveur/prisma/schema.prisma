@@ -1,13 +1,55 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
 }
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  username  String   @unique
+  photos    Photo[]
+  groups    Group[]  @relation("UserGroups")
+}
+
+model Photo {
+  id              Int      @id @default(autoincrement())
+  url             String   // URL de l'image
+  audioUrl        String?  // URL du fichier audio (note vocale) [cite: 19, 27]
+  description     String?
+  type_lieu       String   // ex: "nature", "musee" [cite: 16, 32]
+  latitude        Float
+  longitude       Float
+  date            DateTime @default(now())
+  
+  // Gestion de la visibilité [cite: 18, 26]
+  is_public       Boolean  @default(true)
+  groupId         Int?     // Si null et is_public=false, c'est privé [cite: 39]
+  group           Group?   @relation(fields: [groupId], references: [id])
+  
+  author          User?    @relation(fields: [authorId], references: [id])
+  authorId        Int?
+  
+  likes           Int      @default(0)
+}
+
+model Group {
+  id      Int      @id @default(autoincrement())
+  name    String
+  users   User[]   @relation("UserGroups")
+  photos  Photo[]  // Les photos réservées à ce groupe [cite: 18, 39]
+}
+
+model PointOfInterest {
+  id          Int      @id @default(autoincrement())
+  name        String
+  category    String   // restauration, loisirs, culture [cite: 51]
+  latitude    Float
+  longitude   Float
+  budget_est  Float
+  effort_lvl  Int      // 1 à 5 (enfants, seniors) [cite: 52]
+}
+
