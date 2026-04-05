@@ -31,6 +31,7 @@ import com.traveling.ui.travelshare.FeedScreen
 import com.traveling.ui.travelshare.HomeScreen
 import com.traveling.ui.travelshare.LoginScreen
 import com.traveling.ui.travelshare.PostDetailScreen
+import com.traveling.ui.travelshare.PostViewModel
 import com.traveling.ui.travelshare.ProfileScreen
 import com.traveling.ui.travelshare.SignupScreen
 import dagger.hilt.android.AndroidEntryPoint
@@ -53,11 +54,13 @@ fun MainNavigation() {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    
+    // ViewModels partagés au niveau de la navigation
     val authViewModel: AuthViewModel = hiltViewModel()
+    val postViewModel: PostViewModel = hiltViewModel()
 
     Scaffold(
         bottomBar = {
-            // Hide bottom bar on auth, detail, create screens
             val hideBottomBar = currentRoute?.startsWith("post_detail") == true || 
                                 currentRoute == Screen.CreatePost.route ||
                                 currentRoute == Screen.Login.route ||
@@ -125,12 +128,17 @@ fun MainNavigation() {
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(Screen.Home.route) {
-                HomeScreen(onPostClick = { postId ->
-                    navController.navigate(Screen.PostDetail.createRoute(postId))
-                })
+                HomeScreen(
+                    viewModel = postViewModel,
+                    onPostClick = { postId ->
+                        navController.navigate(Screen.PostDetail.createRoute(postId))
+                    }
+                )
             }
             composable(Screen.Feed.route) {
                 FeedScreen(
+                    viewModel = postViewModel,
+                    authViewModel = authViewModel,
                     onPostClick = { postId ->
                         navController.navigate(Screen.PostDetail.createRoute(postId))
                     },
@@ -144,10 +152,19 @@ fun MainNavigation() {
                 arguments = listOf(navArgument("postId") { type = NavType.StringType })
             ) { backStackEntry ->
                 val postId = backStackEntry.arguments?.getString("postId") ?: ""
-                PostDetailScreen(postId = postId, onBack = { navController.popBackStack() })
+                PostDetailScreen(
+                    postId = postId, 
+                    onBack = { navController.popBackStack() },
+                    viewModel = postViewModel,
+                    authViewModel = authViewModel
+                )
             }
             composable(Screen.CreatePost.route) {
-                CreatePostScreen(onBack = { navController.popBackStack() })
+                CreatePostScreen(
+                    onBack = { navController.popBackStack() },
+                    viewModel = postViewModel,
+                    authViewModel = authViewModel
+                )
             }
             composable(Screen.Profile.route) {
                 ProfileScreen(

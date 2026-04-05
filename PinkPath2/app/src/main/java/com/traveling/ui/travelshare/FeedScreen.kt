@@ -13,33 +13,43 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.traveling.ui.common.PostCard
 import com.traveling.ui.common.TravelingSearchBar
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagBlue
-import com.traveling.ui.theme.TravelingTagYellow
 
 @Composable
-fun FeedScreen(onPostClick: (String) -> Unit, onCreatePostClick: () -> Unit) {
+fun FeedScreen(
+    onPostClick: (String) -> Unit,
+    onCreatePostClick: () -> Unit,
+    viewModel: PostViewModel = hiltViewModel(),
+    authViewModel: AuthViewModel = hiltViewModel()
+) {
+    val posts by viewModel.posts.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
+    val currentUser by authViewModel.currentUser.collectAsState()
+
     var selectedTab by remember { mutableStateOf("Populaires") }
     var expanded by remember { mutableStateOf(false) }
-    val groups = listOf("étudiants", "famille", "amis")
+    val groups = remember { listOf("étudiants", "famille", "amis") }
     var selectedGroup by remember { mutableStateOf(groups[0]) }
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onCreatePostClick,
-                containerColor = TravelingDeepPurple,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Post")
+            if (isLoggedIn) {
+                FloatingActionButton(
+                    onClick = onCreatePostClick,
+                    containerColor = TravelingDeepPurple,
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Post")
+                }
             }
         }
     ) { innerPadding ->
@@ -128,41 +138,43 @@ fun FeedScreen(onPostClick: (String) -> Unit, onCreatePostClick: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                item {
-                    PostCard(
-                        title = "“Superbe faculté, l’espace vert est magnifique.”",
-                        tags = listOf(
-                            "Université" to TravelingTagBlue,
-                            "Uni" to TravelingTagBlue,
-                            "FDS" to TravelingTagBlue,
-                            "Montpellier" to TravelingTagYellow
-                        ),
-                        location = "Faculté des sciences",
-                        author = "Yanis Portes",
-                        likes = "122k",
-                        comments = "2",
-                        onClick = { onPostClick("post_1") }
-                    )
+            if (isLoading && posts.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = TravelingDeepPurple)
                 }
-                item {
-                    PostCard(
-                        title = "la pizza à 10e est une affaire!!",
-                        tags = listOf(
-                            "Restaurant" to TravelingTagBlue,
-                            "Pizza" to TravelingTagBlue,
-                            "Halal" to TravelingTagBlue,
-                            "Montpellier" to TravelingTagYellow
-                        ),
-                        location = "Casa Pizza",
-                        author = "Hugo paulin",
-                        likes = "45k",
-                        comments = "12",
-                        onClick = { onPostClick("post_2") }
-                    )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    items(
+                        items = posts,
+                        key = { it.id },
+                        contentType = { "post" }
+                    ) { post ->
+                        val tags = remember(post.tags) {
+                            post.tags?.map { it to TravelingTagBlue } ?: emptyList()
+                        }
+                        
+                        PostCard(
+                            title = post.content ?: post.title ?: "Sans titre",
+                            tags = tags,
+                            location = post.title ?: "Inconnu",
+                            author = post.authorName,
+                            authorProfileUrl = post.authorAvatar,
+                            imageUrl = post.fullImageUrl,
+                            likes = (post.likes ?: 0).toString(),
+                            comments = (post.commentsCount ?: 0).toString(),
+                            isLiked = post.isLiked,
+                            onLikeClick = {
+                                currentUser?.id?.toIntOrNull()?.let { userId ->
+                                    viewModel.toggleLike(post.id, userId)
+                                }
+                            },
+                            onClick = { onPostClick(post.id) }
+                        )
+                    }
                 }
             }
         }

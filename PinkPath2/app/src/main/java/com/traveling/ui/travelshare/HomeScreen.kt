@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.traveling.ui.common.PostCard
 import com.traveling.ui.common.TravelingSearchBar
 import com.traveling.ui.theme.TravelingDeepPurple
@@ -23,7 +24,15 @@ import com.traveling.ui.theme.TravelingTagBlue
 import com.traveling.ui.theme.TravelingTagYellow
 
 @Composable
-fun HomeScreen(onPostClick: (String) -> Unit) {
+fun HomeScreen(
+    onPostClick: (String) -> Unit,
+    viewModel: PostViewModel = hiltViewModel(),
+    authViewModel: AuthViewModel = hiltViewModel()
+) {
+    val posts by viewModel.posts.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val currentUser by authViewModel.currentUser.collectAsState()
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -62,21 +71,32 @@ fun HomeScreen(onPostClick: (String) -> Unit) {
             )
         }
 
-        item {
-            PostCard(
-                title = "“Superbe faculté, l’espace vert est magnifique.”",
-                tags = listOf(
-                    "Université" to TravelingTagBlue,
-                    "Uni" to TravelingTagBlue,
-                    "FDS" to TravelingTagBlue,
-                    "Montpellier" to TravelingTagYellow
-                ),
-                location = "Faculté des sciences",
-                author = "Yanis Portes",
-                likes = "122k",
-                comments = "5",
-                onClick = { onPostClick("post_123") }
-            )
+        if (isLoading && posts.isEmpty()) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = TravelingDeepPurple)
+                }
+            }
+        } else {
+            items(posts) { post ->
+                PostCard(
+                    title = post.content ?: post.title ?: "Sans titre",
+                    tags = post.tags?.map { it to TravelingTagBlue } ?: emptyList(),
+                    location = post.title ?: "Inconnu",
+                    author = post.authorName,
+                    authorProfileUrl = post.authorAvatar,
+                    imageUrl = post.fullImageUrl,
+                    likes = (post.likes ?: 0).toString(),
+                    comments = (post.commentsCount ?: 0).toString(),
+                    isLiked = post.isLiked,
+                    onLikeClick = { 
+                        currentUser?.id?.toIntOrNull()?.let { userId ->
+                            viewModel.toggleLike(post.id, userId) 
+                        }
+                    },
+                    onClick = { onPostClick(post.id) }
+                )
+            }
         }
         
         item { Spacer(modifier = Modifier.height(16.dp)) }

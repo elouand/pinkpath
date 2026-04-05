@@ -7,12 +7,15 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  username  String   @unique
-  photos    Photo[]
-  groups    Group[]  @relation("UserGroups")
+  id         Int      @id @default(autoincrement())
+  username   String   @unique
+  password   String
+  email      String?
+  profileUrl String?  // <--- Nouveau champ pour la photo de profil
+  photos     Photo[]
+  groups     Group[]  @relation("UserGroups")
+  comments   Comment[]
+  likes    Like[]    // Relation : les likes donnés par cet utilisateur
 }
 
 model Photo {
@@ -32,17 +35,43 @@ model Photo {
   
   author          User?    @relation(fields: [authorId], references: [id])
   authorId        Int?
-  
-  likes           Int      @default(0)
+  comments    Comment[] // Relation : une photo peut avoir plusieurs commentaires
+  osmId       BigInt?  // L'ID unique provenant d'OpenStreetMap
+  placeName   String?  // Le nom officiel renvoyé par l'API (ex: "Jardins du Trocadéro")
+  likesCount Int     @default(0) // On renomme pour plus de clarté
+  likedBy    Like[]    // Relation : les likes reçus par cette photo
+  // Les tags restent utiles pour le filtrage par ambiance (ex: "Randonnée")
 }
-
+model Comment {
+  id        Int      @id @default(autoincrement())
+  text      String
+  createdAt DateTime @default(now())
+  
+  // L'auteur du commentaire
+  author    User     @relation(fields: [authorId], references: [id])
+  authorId  Int
+  
+  // La photo concernée
+  photo     Photo    @relation(fields: [photoId], references: [id])
+  photoId   Int
+}
 model Group {
   id      Int      @id @default(autoincrement())
   name    String
   users   User[]   @relation("UserGroups")
   photos  Photo[]  // Les photos réservées à ce groupe [cite: 18, 39]
 }
+model Like {
+  id      Int    @id @default(autoincrement())
+  user    User   @relation(fields: [userId], references: [id])
+  userId  Int
+  photo   Photo  @relation(fields: [photoId], references: [id])
+  photoId Int
 
+  // ⚠️ CETTE LIGNE EST LA CLÉ :
+  // Elle interdit d'avoir deux fois le même couple userId/photoId
+  @@unique([userId, photoId]) 
+}
 model PointOfInterest {
   id          Int      @id @default(autoincrement())
   name        String
