@@ -22,7 +22,7 @@ data class PhotonFeature(
 )
 
 data class PhotonProperties(
-    val name: String,
+    val name: String? = null,
     val city: String? = null,
     val country: String? = null,
     val street: String? = null

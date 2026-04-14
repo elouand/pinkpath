@@ -25,7 +25,13 @@ data class Post(
     @SerializedName("isLiked") 
     val isLiked: Boolean = false,
 
-    val tags: List<String>? = null
+    val tags: List<String>? = null,
+    
+    val groupName: String? = null,
+    
+    // Le serveur envoie "isPublic" dans le GET
+    @SerializedName("isPublic")
+    val isPublic: Boolean = true
 ) {
     val fullImageUrl: String? get() = imageUrl
     val displayLikes: Int get() = likes

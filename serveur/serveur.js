@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
@@ -9,6 +10,7 @@ const path = require('path');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 
 const JWT_SECRET = "ton_secret_ultra_confidentiel"; // Change ça pour la prod
 // 1. Configuration de la connexion PostgreSQL
@@ -56,15 +58,15 @@ app.post('/api/photos', upload.fields([
     { name: 'image', maxCount: 1 }, 
     { name: 'audio', maxCount: 1 }
 ]), async (req, res) => {
-    console.log("\n📥 [POST] Nouvelle tentative de publication...");
-
     try {
-        const { description, type_lieu, latitude, longitude, is_public, authorId } = req.body;
+        const { description, type_lieu, latitude, longitude, is_public, authorId, groupId, tags } = req.body;
 
         if (!req.files || !req.files['image']) {
-            console.log("❌ Erreur : Image manquante.");
             return res.status(400).json({ error: "Image manquante" });
         }
+
+        // Nettoyage des tags : transforme "Rando, Nature" en ["rando", "nature"]
+        const tagsArray = tags ? tags.split(',').map(t => t.trim().toLowerCase()).filter(t => t !== "") : [];
 
         const photo = await prisma.photo.create({
             data: {
@@ -76,17 +78,237 @@ app.post('/api/photos', upload.fields([
                 longitude: parseFloat(longitude) || 0,
                 is_public: is_public === 'true',
                 authorId: authorId ? parseInt(authorId) : null,
-                likesCount: 0
-            }
+                groupId: groupId ? parseInt(groupId) : null,
+                likesCount: 0,
+                // --- LOGIQUE DES TAGS ---
+                tags: {
+                    connectOrCreate: tagsArray.map(tagName => ({
+                        where: { name: tagName },
+                        create: { name: tagName }
+                    }))
+                }
+            },
+            include: { tags: true }
         });
 
-        console.log(`✅ Succès ! Post enregistré (ID: ${photo.id})`);
         res.status(201).json(photo);
     } catch (error) {
         console.error("💥 Erreur upload :", error);
         res.status(500).json({ error: "Erreur serveur" });
     }
 });
+
+
+app.get('/api/photos', async (req, res) => {
+    const userId = req.query.userId ? parseInt(req.query.userId) : null;
+
+    try {
+        const photos = await prisma.photo.findMany({
+            where: {
+                OR: [
+                    { is_public: true }, // 1. Photos marquées publiques
+                    { group: { isPublic: true } }, // 2. Photos dans des groupes publics
+                    ...(userId ? [
+                        { authorId: userId }, // 3. Mes propres photos
+                        { 
+                            group: { 
+                                members: { some: { userId: userId } } // 4. Photos de mes groupes
+                            } 
+                        }
+                    ] : [])
+                ]
+            },
+            include: { 
+                author: true,
+                tags: true,
+                group: true,
+                _count: { select: { comments: true } },
+                likedBy: userId ? { where: { userId: userId } } : false
+            },
+            orderBy: { date: 'desc' }
+        });
+
+        const formattedPosts = photos.map(p => ({
+            id: p.id.toString(),
+            title: p.type_lieu,
+            content: p.description,
+            latitude: p.latitude,
+            longitude: p.longitude,
+           imageUrl: `${BASE_URL}${p.url}`,
+            audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null,             
+            author: p.author ? (p.author.pseudo || p.author.username) : "Anonyme",
+            authorAvatarUrl: p.author && p.author.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
+            likes: p.likesCount || 0,
+            commentCount: p._count ? p._count.comments : 0,
+            isLiked: p.likedBy && p.likedBy.length > 0,
+            tags: p.tags.map(t => t.name),
+            groupName: p.group ? p.group.name : null,
+            isPublic: p.is_public // Confirmé pour l'onglet "Populaires"
+        }));
+
+        res.json(formattedPosts);
+    } catch (error) {
+        console.error("💥 Erreur flux :", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+
+
+/** [POST] Créer un nouveau groupe et y ajouter le créateur */
+app.post('/api/groups', upload.single('groupImage'), async (req, res) => {
+    try {
+        const { name, description, isPublic, userId } = req.body;
+        const file = req.file;
+
+        const group = await prisma.group.create({
+            data: {
+                name,
+                description,
+                isPublic: isPublic === 'true',
+                imageUrl: file ? `/uploads/${file.filename}` : null,
+                members: {
+                    create: {
+                        userId: parseInt(userId),
+                        role: 'ADMIN' // Le créateur est Admin par défaut
+                    }
+                }
+            }
+        });
+        res.status(201).json(group);
+    } catch (error) {
+        res.status(500).json({ error: "Erreur création groupe" });
+    }
+});
+
+/** [GET] Récupérer les groupes auxquels appartient un utilisateur */
+app.get('/api/users/:userId/groups', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        const userMemberships = await prisma.groupMember.findMany({
+            where: { userId: parseInt(userId) },
+            include: {
+                group: {
+                    include: {
+                        // On récupère les 3 premiers membres pour les avatars de la carte
+                        members: {
+                            take: 3,
+                            include: {
+                                user: {
+                                    select: { id: true, profileUrl: true }
+                                }
+                            }
+                        },
+                        // On récupère les compteurs globaux
+                        _count: { 
+                            select: { members: true, photos: true } 
+                        }
+                    }
+                }
+            }
+        });
+
+        const formattedGroups = userMemberships.map(membership => ({
+            id: membership.group.id,
+            name: membership.group.name,
+            description: membership.group.description,
+            imageUrl: membership.group.imageUrl ? `${BASE_URL}${membership.group.imageUrl}` : null,
+            isPublic: membership.group.isPublic,
+            userRole: membership.role,
+            
+            // On transforme les membres pour correspondre à group.users sur Android
+            users: membership.group.members.map(m => ({
+                id: m.user.id,
+                profileUrl: m.user.profileUrl ? `${BASE_URL}${m.user.profileUrl}` : null
+            })),
+
+            // On crée l'objet "count" attendu par Kotlin
+            count: {
+                users: membership.group._count.members,
+                photos: membership.group._count.photos,
+                paths: 0 // À remplacer par ton compteur d'itinéraires quand tu auras le modèle
+            }
+        }));
+
+        res.json(formattedGroups);
+    } catch (error) {
+        console.error("💥 Erreur récupération groupes :", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+
+/** [GET] Récupérer les détails d'un groupe (Membres + Photos) */
+app.get('/api/groups/:groupId', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const group = await prisma.group.findUnique({
+            where: { id: parseInt(groupId) },
+            include: {
+                users: {
+                    select: {
+                        id: true,
+                        username: true,
+                        pseudo: true,
+                        profileUrl: true
+                    }
+                },
+                photos: {
+                    include: {
+                        author: true,
+                        tags: true,
+                        _count: { select: { comments: true } }
+                    },
+                    orderBy: { date: 'desc' }
+                }
+            }
+        });
+
+        if (!group) return res.status(404).json({ error: "Groupe non trouvé" });
+
+        // Formatage pour l'URL des images
+        const formattedPhotos = group.photos.map(p => ({
+            ...p,
+            imageUrl: `${BASE_URL}${p.url}`,
+            authorAvatarUrl: p.author?.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null
+        }));
+
+        res.json({
+            ...group,
+            photos: formattedPhotos
+        });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+
+
+/** [POST] Ajouter un utilisateur à un groupe existant (via son pseudo) */
+app.post('/api/groups/:groupId/add-user', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { usernameToAdd } = req.body;
+
+        const updatedGroup = await prisma.group.update({
+            where: { id: parseInt(groupId) },
+            data: {
+                users: {
+                    connect: { username: usernameToAdd }
+                }
+            },
+            include: { users: true }
+        });
+
+        res.json({ message: `${usernameToAdd} a rejoint le groupe !`, group: updatedGroup });
+    } catch (error) {
+        console.error("💥 Erreur ajout membre :", error);
+        res.status(404).json({ error: "Utilisateur ou groupe introuvable" });
+    }
+});
+
+
 
 
 
@@ -196,74 +418,41 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 
-app.get('/api/photos', async (req, res) => {
-    // On récupère l'ID de l'utilisateur connecté envoyé par Android
-    // Exemple d'appel : /api/photos?userId=1
-    const userId = req.query.userId ? parseInt(req.query.userId) : null;
-
-    try {
-        const photos = await prisma.photo.findMany({
-            where: { is_public: true },
-			take: 20,
-            include: { 
-                author: true,
-                _count: { select: { comments: true } },
-                // ON CHARGE LE LIKE de l'utilisateur actuel s'il existe
-                likedBy: userId ? { where: { userId: userId } } : false
-            },
-            orderBy: { date: 'desc' }
-        });
-
-        const formattedPosts = photos.map(p => ({
-            id: p.id.toString(),
-            title: p.type_lieu,
-            content: p.description,
-            latitude: p.latitude,
-            longitude: p.longitude,
-            
-            imageUrl: `${BASE_URL}${p.url}`,
-            author: p.author ? (p.author.pseudo || p.author.username) : "Anonyme",
-            authorAvatarUrl: p.author && p.author.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
-            likes: p.likesCount || 0,
-            commentCount: p._count ? p._count.comments : 0,
-
-            // --- LA LOGIQUE DU CŒUR EST ICI ---
-            // Si likedBy contient un élément, ça veut dire que l'utilisateur a liké !
-            isLiked: p.likedBy && p.likedBy.length > 0 
-        }));
-
-        res.json(formattedPosts);
-    } catch (error) {
-        console.error("💥 Erreur flux :", error);
-        res.status(500).json({ error: "Erreur serveur" });
-    }
-});
 
 
-app.get('/api/photos/:photoId/comments', async (req, res) => {
+/** [POST] Ajouter un commentaire à une photo */
+app.post('/api/photos/:photoId/comments', async (req, res) => {
+    console.log(`💬 Nouveau commentaire sur la photo ${req.params.photoId}`);
     try {
         const { photoId } = req.params;
-        const comments = await prisma.comment.findMany({
-            where: { photoId: parseInt(photoId) },
-            include: { 
-                author: true // Récupère les infos de celui qui a commenté
+        const { text, userId } = req.body; // L'ID de l'utilisateur qui commente
+
+        if (!text || !userId) {
+            return res.status(400).json({ error: "Texte ou ID utilisateur manquant" });
+        }
+
+        const comment = await prisma.comment.create({
+            data: {
+                text: text,
+                photoId: parseInt(photoId),
+                authorId: parseInt(userId)
             },
-            orderBy: { createdAt: 'asc' }
+            include: { author: true } // On inclut l'auteur pour renvoyer le pseudo direct
         });
 
-        // On formate pour que l'app ait des URLs utilisables (http://...)
-       const formattedComments = comments.map(c => ({
-        id: c.id,
-        text: c.text,
-        date: c.createdAt,
-        // On affiche le pseudo en priorité
-        authorName: c.author.pseudo || c.author.username,
-        authorAvatarUrl: c.author.profileUrl ? `${BASE_URL}${c.author.profileUrl}` : null
-    }));
+        // On renvoie le commentaire formaté exactement comme le GET
+        // pour que ton app puisse l'ajouter à la liste instantanément
+        res.status(201).json({
+            id: comment.id,
+            text: comment.text,
+            date: comment.createdAt,
+            authorName: comment.author.pseudo || comment.author.username,
+            authorAvatarUrl: comment.author.profileUrl ? `${BASE_URL}${comment.author.profileUrl}` : null
+        });
 
-        res.json(formattedComments);
     } catch (error) {
-        res.status(500).json({ error: "Erreur récupération commentaires" });
+        console.error("💥 Erreur creation commentaire :", error);
+        res.status(500).json({ error: "Erreur serveur" });
     }
 });
 
@@ -276,9 +465,19 @@ app.get('/api/photos/:photoId/comments', async (req, res) => {
             include: { author: true },
             orderBy: { createdAt: 'asc' }
         });
-        res.json(comments);
+
+        const formattedComments = comments.map(c => ({
+            id: c.id,
+            text: c.text,
+            date: c.createdAt,
+            authorName: c.author.pseudo || c.author.username,
+            authorAvatarUrl: c.author.profileUrl ? `${BASE_URL}${c.author.profileUrl}` : null
+        }));
+
+        res.json(formattedComments);
     } catch (error) {
-        res.status(500).json({ error: "Erreur lors de la récupération des commentaires" });
+        console.error("💥 Erreur récupération commentaires :", error);
+        res.status(500).json({ error: "Erreur serveur" });
     }
 });
 
@@ -328,9 +527,74 @@ app.post('/api/photos/:photoId/like', async (req, res) => {
         console.error("💥 Erreur Like :", error);
         res.status(500).json({ error: "Erreur serveur" });
     }
+    /** * [GET] /api/places/nearby
+ * Récupère les lieux autour de l'utilisateur en temps réel depuis OpenStreetMap
+ */
+app.get('/api/places/nearby', async (req, res) => {
+    try {
+        const { lat, lon } = req.query;
+
+        if (!lat || !lon) {
+            return res.status(400).json({ error: "Latitude et Longitude manquantes" });
+        }
+
+        // On définit un rayon de 3km autour de l'utilisateur (3000 mètres)
+        const radius = 3000;
+        const overpassUrl = `https://overpass-api.de/api/interpreter`;
+        
+        // Requête Overpass : On cherche les lieux avec un nom (commerces, parcs, tourisme...)
+        const overpassQuery = `
+            [out:json][timeout:25];
+            (
+              node["name"](around:${radius},${lat},${lon});
+              way["name"](around:${radius},${lat},${lon});
+            );
+            out center;
+        `;
+
+        const response = await axios.post(overpassUrl, overpassQuery);
+        
+        // On formate les données pour ton application mobile
+        const places = response.data.elements.map(el => ({
+            id: el.id.toString(),
+            name: el.tags.name,
+            type: el.tags.amenity || el.tags.tourism || el.tags.leisure || "Lieu d'intérêt",
+            latitude: el.lat || el.center.lat,
+            longitude: el.lon || el.center.lon,
+        }));
+
+        console.log(`📍 ${places.length} lieux trouvés autour de ${lat},${lon}`);
+        res.json(places);
+
+    } catch (error) {
+        console.error("💥 Erreur OSM :", error);
+        res.status(500).json({ error: "Erreur lors de la récupération des lieux" });
+    }
+});
 });
 
+app.patch('/api/groups/:groupId/role', async (req, res) => {
+    const { groupId } = req.params;
+    const { targetUserId, newRole, requesterId } = req.body;
 
+    try {
+        const requester = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: parseInt(requesterId), groupId: parseInt(groupId) } }
+        });
+
+        if (!requester || requester.role !== 'ADMIN') {
+            return res.status(403).json({ error: "Droits insuffisants" });
+        }
+
+        await prisma.groupMember.update({
+            where: { userId_groupId: { userId: parseInt(targetUserId), groupId: parseInt(groupId) } },
+            data: { role: newRole }
+        });
+        res.json({ message: "Rôle mis à jour" });
+    } catch (error) {
+        res.status(500).json({ error: "Échec de mise à jour" });
+    }
+});
 
 
 

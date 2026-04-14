@@ -14,4 +14,7 @@ sealed class Screen(val route: String) {
     object Signup : Screen("signup")
     object CreateGroup : Screen("create_group")
     object CreatePath : Screen("create_path")
+    object GroupDetail : Screen("group_detail/{groupId}") {
+        fun createRoute(groupId: Int) = "group_detail/$groupId"
+    }
 }

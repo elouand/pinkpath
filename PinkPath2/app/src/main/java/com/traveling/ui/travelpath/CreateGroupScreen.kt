@@ -1,32 +1,78 @@
 package com.traveling.ui.travelpath
 
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.traveling.ui.common.TravelingSearchBar
+import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.travelshare.AuthTextField
+import com.traveling.ui.travelshare.PostViewModel
+import com.traveling.util.uriToFile
 
 @Composable
-fun CreateGroupScreen(onBack: () -> Unit) {
+fun CreateGroupScreen(
+    onBack: () -> Unit,
+    viewModel: PostViewModel = hiltViewModel()
+) {
+    val context = LocalContext.current
     var groupName by remember { mutableStateOf("") }
-    var isPrivate by remember { mutableStateOf(true) }
+    var description by remember { mutableStateOf("") }
+    var isPrivate by remember { mutableStateOf(false) }
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
+
+    val isLoading by viewModel.isLoading.collectAsState()
+    val uploadSuccess by viewModel.uploadSuccess.collectAsState()
+    val error by viewModel.error.collectAsState()
+
+    val imageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        imageUri = uri
+    }
+
+    LaunchedEffect(uploadSuccess) {
+        if (uploadSuccess) {
+            Toast.makeText(context, "Groupe créé avec succès !", Toast.LENGTH_SHORT).show()
+            viewModel.resetUploadStatus()
+            onBack()
+        }
+    }
+
+    LaunchedEffect(error) {
+        error?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            viewModel.clearError()
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(32.dp))
@@ -35,11 +81,41 @@ fun CreateGroupScreen(onBack: () -> Unit) {
             text = "Créer un groupe",
             style = MaterialTheme.typography.displayMedium,
             color = TravelingDeepPurple,
-            fontSize = 40.sp,
+            fontSize = 32.sp,
             fontWeight = FontWeight.Bold
         )
 
         Spacer(modifier = Modifier.height(32.dp))
+
+        // Image Selection
+        Surface(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(RoundedCornerShape(60.dp))
+                .clickable { imageLauncher.launch("image/*") }
+                .background(TravelingDeepPurple.copy(alpha = 0.1f)),
+            color = Color.Transparent
+        ) {
+            if (imageUri != null) {
+                AsyncImage(
+                    model = imageUri,
+                    contentDescription = "Image du groupe",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.AddPhotoAlternate,
+                        contentDescription = "Ajouter une image",
+                        tint = TravelingDeepPurple,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
 
         AuthTextField(
             value = groupName,
@@ -47,79 +123,94 @@ fun CreateGroupScreen(onBack: () -> Unit) {
             placeholder = "Nom du groupe"
         )
 
-        Spacer(modifier = Modifier.height(40.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        TravelingSearchBar(placeholder = "Rechercher un utilisateur")
+        OutlinedTextField(
+            value = description,
+            onValueChange = { description = it },
+            label = { Text("Description du groupe") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent
+            )
+        )
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Avatars Row
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            repeat(3) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .padding(end = 8.dp)
-                        .clip(CircleShape)
-                        .background(Color.Gray)
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color.White.copy(alpha = 0.5f)
-            ) {
+            Column {
                 Text(
-                    text = "+1",
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    color = Color.Gray,
-                    fontSize = 14.sp
+                    text = "Groupe privé",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TravelingDeepPurple,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (isPrivate) "Seuls les membres peuvent voir" else "Tout le monde peut voir",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
                 )
             }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
-            Text(
-                text = "groupe privé",
-                style = MaterialTheme.typography.titleLarge,
-                color = TravelingDeepPurple,
-                fontWeight = FontWeight.Bold
-            )
             Switch(
                 checked = isPrivate,
                 onCheckedChange = { isPrivate = it },
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
-                    checkedTrackColor = Color(0xFF9C27B0), // Purple switch
+                    checkedTrackColor = TravelingDeepPurple,
                     uncheckedThumbColor = Color.White,
                     uncheckedTrackColor = Color.Gray
                 )
             )
         }
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(40.dp))
 
-        Button(
-            onClick = { /* TODO: Create Group Logic */ },
-            modifier = Modifier
-                .fillMaxWidth(0.8f)
-                .height(100.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text(
-                text = "Créer le groupe",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
+        if (isLoading) {
+            CircularProgressIndicator(color = TravelingDeepPurple)
+        } else {
+            Button(
+                onClick = {
+                    if (groupName.isNotBlank()) {
+                        val file = imageUri?.let { uriToFile(context, it) }
+                        viewModel.createGroup(
+                            name = groupName,
+                            description = description,
+                            isPrivate = isPrivate,
+                            image = file
+                        )
+                    } else {
+                        Toast.makeText(context, "Le nom du groupe est requis", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
+                shape = RoundedCornerShape(28.dp)
+            ) {
+                Icon(Icons.Default.Group, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Créer le groupe",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(40.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        TextButton(onClick = onBack) {
+            Text("Annuler", color = Color.Gray)
+        }
     }
 }

@@ -24,6 +24,7 @@ import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTheme
 import com.traveling.ui.travelpath.CreateGroupScreen
 import com.traveling.ui.travelpath.CreatePathScreen
+import com.traveling.ui.travelpath.GroupDetailScreen
 import com.traveling.ui.travelpath.TravelPathScreen
 import com.traveling.ui.travelshare.AuthViewModel
 import com.traveling.ui.travelshare.CreatePostScreen
@@ -62,6 +63,7 @@ fun MainNavigation() {
     Scaffold(
         bottomBar = {
             val hideBottomBar = currentRoute?.startsWith("post_detail") == true || 
+                                currentRoute?.startsWith("group_detail") == true ||
                                 currentRoute == Screen.CreatePost.route ||
                                 currentRoute == Screen.Login.route ||
                                 currentRoute == Screen.Signup.route ||
@@ -196,7 +198,11 @@ fun MainNavigation() {
             composable(Screen.Path.route) {
                 TravelPathScreen(
                     onCreatePathClick = { navController.navigate(Screen.CreatePath.route) },
-                    onCreateGroupClick = { navController.navigate(Screen.CreateGroup.route) }
+                    onCreateGroupClick = { navController.navigate(Screen.CreateGroup.route) },
+                    onGroupClick = { groupId ->
+                        navController.navigate(Screen.GroupDetail.createRoute(groupId))
+                    },
+                    viewModel = postViewModel
                 )
             }
             composable(Screen.CreateGroup.route) {
@@ -204,6 +210,17 @@ fun MainNavigation() {
             }
             composable(Screen.CreatePath.route) {
                 CreatePathScreen(onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = Screen.GroupDetail.route,
+                arguments = listOf(navArgument("groupId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val groupId = backStackEntry.arguments?.getInt("groupId") ?: 0
+                GroupDetailScreen(
+                    groupId = groupId,
+                    onBack = { navController.popBackStack() },
+                    viewModel = postViewModel
+                )
             }
         }
     }

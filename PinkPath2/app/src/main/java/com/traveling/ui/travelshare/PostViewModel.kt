@@ -7,6 +7,7 @@ import com.traveling.data.remote.CommentResponse
 import com.traveling.data.remote.PhotonApi
 import com.traveling.data.remote.PhotonFeature
 import com.traveling.domain.model.Post
+import com.traveling.domain.model.Group
 import com.traveling.domain.repository.PostRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,25 +39,36 @@ class PostViewModel @Inject constructor(
     private val _comments = MutableStateFlow<Map<String, List<CommentResponse>>>(emptyMap())
     val comments: StateFlow<Map<String, List<CommentResponse>>> = _comments
 
+    private val _groups = MutableStateFlow<List<Group>>(emptyList())
+    val groups: StateFlow<List<Group>> = _groups
+
     init {
         loadPosts()
+        loadUserGroups()
     }
 
     fun loadPosts() {
         viewModelScope.launch {
             _isLoading.value = true
             val userId = sessionManager.getUserId()?.toIntOrNull()
-            println("📡 Tentative de récupération des posts pour userId: $userId")
             repository.getPosts(userId).onSuccess {
-                println("✅ ${it.size} posts récupérés avec succès")
                 _posts.value = it
                 _error.value = null
             }.onFailure {
-                println("❌ Échec de la récupération: ${it.message}")
-                it.printStackTrace()
                 handleError(it, "chargement")
             }
             _isLoading.value = false
+        }
+    }
+
+    fun loadUserGroups() {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.getUserGroups(userId).onSuccess {
+                _groups.value = it
+            }.onFailure {
+                handleError(it, "récupération groupes")
+            }
         }
     }
 
@@ -77,18 +89,52 @@ class PostViewModel @Inject constructor(
         latitude: Double,
         longitude: Double,
         isPublic: Boolean,
-        authorId: String? = null
+        authorId: String? = null,
+        groupId: Int? = null,
+        tags: String? = null
     ) {
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             repository.uploadPost(
-                image, audio, description, typeLieu, latitude, longitude, isPublic, authorId
+                image, audio, description, typeLieu, latitude, longitude, isPublic, authorId, groupId, tags
             ).onSuccess {
                 _uploadSuccess.value = true
                 loadPosts()
             }.onFailure {
                 handleError(it, "envoi")
+            }
+            _isLoading.value = false
+        }
+    }
+
+    fun createGroup(
+        name: String,
+        description: String? = null,
+        isPrivate: Boolean = false,
+        image: File? = null
+    ) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            repository.createGroup(name, userId, description, isPrivate, image).onSuccess {
+                loadUserGroups()
+                _uploadSuccess.value = true
+            }.onFailure {
+                handleError(it, "création groupe")
+            }
+            _isLoading.value = false
+        }
+    }
+
+    fun addUserToGroup(groupId: Int, username: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            repository.addUserToGroup(groupId, username).onSuccess {
+                loadUserGroups()
+            }.onFailure {
+                handleError(it, "ajout membre")
             }
             _isLoading.value = false
         }
@@ -132,9 +178,9 @@ class PostViewModel @Inject constructor(
         }
     }
 
-    fun addComment(postId: String, text: String, authorId: Int) {
+    fun addComment(postId: String, text: String, userId: Int) {
         viewModelScope.launch {
-            repository.addComment(postId, text, authorId).onSuccess {
+            repository.addComment(postId, text, userId).onSuccess {
                 loadComments(postId)
                 loadPosts()
             }.onFailure {

@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,7 +23,9 @@ import com.traveling.ui.common.PostCard
 import com.traveling.ui.common.TravelingSearchBar
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagBlue
+import com.traveling.ui.theme.TravelingTagYellow
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(
     onPostClick: (String) -> Unit,
@@ -34,11 +37,33 @@ fun FeedScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
     val currentUser by authViewModel.currentUser.collectAsState()
+    val userGroups by viewModel.groups.collectAsState()
 
     var selectedTab by remember { mutableStateOf("Populaires") }
     var expanded by remember { mutableStateOf(false) }
-    val groups = remember { listOf("étudiants", "famille", "amis") }
-    var selectedGroup by remember { mutableStateOf(groups[0]) }
+    
+    // On initialise le groupe sélectionné par le premier groupe de l'utilisateur s'il existe
+    var selectedGroup by remember { mutableStateOf<String?>(null) }
+    
+    LaunchedEffect(userGroups) {
+        if (selectedGroup == null && userGroups.isNotEmpty()) {
+            selectedGroup = userGroups.first().name
+        }
+    }
+
+    // Filtrage des posts selon l'onglet ou le groupe sélectionné
+    val filteredPosts = remember(posts, selectedTab, selectedGroup) {
+        if (selectedTab == "Populaires") {
+            posts.filter { it.isPublic }
+        } else {
+            posts.filter { it.groupName == selectedGroup }
+        }
+    }
+
+    LaunchedEffect(isLoggedIn) {
+        viewModel.loadPosts()
+        viewModel.loadUserGroups()
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -105,7 +130,7 @@ fun FeedScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = selectedGroup,
+                                text = selectedGroup ?: "Groupes",
                                 style = MaterialTheme.typography.titleLarge,
                                 color = if (selectedTab == "Group") Color.White else TravelingDeepPurple,
                                 fontWeight = FontWeight.Bold
@@ -118,20 +143,22 @@ fun FeedScreen(
                         }
                     }
 
-                    DropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false },
-                        modifier = Modifier.background(Color.White)
-                    ) {
-                        groups.forEach { group ->
-                            DropdownMenuItem(
-                                text = { Text(group, color = TravelingDeepPurple) },
-                                onClick = {
-                                    selectedGroup = group
-                                    selectedTab = "Group"
-                                    expanded = false
-                                }
-                            )
+                    if (userGroups.isNotEmpty()) {
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false },
+                            modifier = Modifier.background(Color.White)
+                        ) {
+                            userGroups.forEach { group ->
+                                DropdownMenuItem(
+                                    text = { Text(group.name, color = TravelingDeepPurple) },
+                                    onClick = {
+                                        selectedGroup = group.name
+                                        selectedTab = "Group"
+                                        expanded = false
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -139,42 +166,54 @@ fun FeedScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (isLoading && posts.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = TravelingDeepPurple)
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp)
-                ) {
-                    items(
-                        items = posts,
-                        key = { it.id },
-                        contentType = { "post" }
-                    ) { post ->
-                        val tags = remember(post.tags) {
-                            post.tags?.map { it to TravelingTagBlue } ?: emptyList<Pair<String, Color>>()
+            PullToRefreshBox(
+                isRefreshing = isLoading,
+                onRefresh = { 
+                    viewModel.loadPosts()
+                    viewModel.loadUserGroups()
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                if (filteredPosts.isEmpty() && !isLoading) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        val message = if (selectedTab == "Populaires") "Aucun post public" else "Aucun post dans ce groupe"
+                        Text(message, color = Color.Gray)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        contentPadding = PaddingValues(bottom = 16.dp)
+                    ) {
+                        items(
+                            items = filteredPosts,
+                            key = { it.id },
+                            contentType = { "post" }
+                        ) { post ->
+                            val tags = remember(post.tags) {
+                                post.tags?.mapIndexed { index, tag -> 
+                                    tag to if (index % 4 == 3) TravelingTagYellow else TravelingTagBlue 
+                                } ?: emptyList()
+                            }
+                            
+                            PostCard(
+                                title = post.content ?: post.title ?: "Sans titre",
+                                tags = tags,
+                                location = post.title ?: "Inconnu",
+                                author = post.authorName ?: "Anonyme",
+                                authorProfileUrl = post.authorAvatar,
+                                imageUrl = post.fullImageUrl,
+                                likes = post.likes.toString(),
+                                comments = post.commentsCount.toString(),
+                                isLiked = post.isLiked,
+                                onLikeClick = {
+                                    currentUser?.id?.toIntOrNull()?.let { userId ->
+                                        viewModel.toggleLike(post.id, userId)
+                                    }
+                                },
+                                onClick = { onPostClick(post.id) }
+                            )
                         }
-                        
-                        PostCard(
-                            title = post.content ?: post.title ?: "Sans titre",
-                            tags = tags,
-                            location = post.title ?: "Inconnu",
-                            author = post.authorName ?: "Anonyme",
-                            authorProfileUrl = post.authorAvatar,
-                            imageUrl = post.fullImageUrl,
-                            likes = post.likes.toString(),
-                            comments = post.commentsCount.toString(),
-                            isLiked = post.isLiked,
-                            onLikeClick = {
-                                currentUser?.id?.toIntOrNull()?.let { userId ->
-                                    viewModel.toggleLike(post.id, userId)
-                                }
-                            },
-                            onClick = { onPostClick(post.id) }
-                        )
                     }
                 }
             }

@@ -26,7 +26,7 @@ class SessionManager @Inject constructor(@ApplicationContext context: Context) {
         return prefs.getString("user_id", null)
     }
 
-    fun saveUsername(username: String) {
+    fun saveUsername(username: String?) {
         prefs.edit().putString("username", username).apply()
     }
 

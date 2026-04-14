@@ -4,11 +4,10 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,17 +42,31 @@ fun PostDetailScreen(
 ) {
     val context = LocalContext.current
     val posts by viewModel.posts.collectAsState()
-    val post = posts.find { it.id == postId }
+    val post = remember(posts, postId) { posts.find { it.id == postId } }
     
     val commentsMap by viewModel.comments.collectAsState()
     val comments = commentsMap[postId] ?: emptyList()
     val currentUser by authViewModel.currentUser.collectAsState()
+    val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
+    val error by viewModel.error.collectAsState()
 
     var commentText by remember { mutableStateOf("") }
-    
-    // État pour la lecture audio
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
+
+    // Observation des erreurs (important pour debug les commentaires)
+    LaunchedEffect(error) {
+        error?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            viewModel.clearError()
+        }
+    }
+
+    LaunchedEffect(isLoggedIn) {
+        if (posts.isEmpty()) {
+            viewModel.loadPosts()
+        }
+    }
 
     LaunchedEffect(postId) {
         viewModel.loadComments(postId)
@@ -79,8 +92,8 @@ fun PostDetailScreen(
         }
     ) { innerPadding ->
         if (post == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+            Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = TravelingDeepPurple)
             }
         } else {
             Column(
@@ -147,7 +160,6 @@ fun PostDetailScreen(
                                 try {
                                     context.startActivity(mapIntent)
                                 } catch (e: Exception) {
-                                    // Fallback if maps app not available
                                     context.startActivity(Intent(Intent.ACTION_VIEW, uri))
                                 }
                             },
@@ -257,37 +269,37 @@ fun PostDetailScreen(
                 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                comments.forEach { comment ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        if (comment.authorAvatarUrl != null) {
-                            AsyncImage(
-                                model = comment.authorAvatarUrl,
-                                contentDescription = null,
-                                modifier = Modifier.size(32.dp).clip(CircleShape),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Color.LightGray))
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(text = comment.authorName ?: "Anonyme", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text(text = comment.text ?: "", fontSize = 14.sp)
-                        }
-                    }
-                }
-
                 if (comments.isEmpty()) {
                     Text(text = "Aucun commentaire pour le moment", color = Color.Gray, fontSize = 14.sp)
+                } else {
+                    comments.forEach { comment ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            if (comment.authorAvatarUrl != null) {
+                                AsyncImage(
+                                    model = comment.authorAvatarUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(32.dp).clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Color.LightGray))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(text = comment.authorName ?: "Anonyme", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(text = comment.text ?: "", fontSize = 14.sp)
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Ajouter un commentaire
-                if (currentUser != null) {
+                if (isLoggedIn) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
