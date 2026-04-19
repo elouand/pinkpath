@@ -1,6 +1,8 @@
 package com.traveling.di
 
+import com.traveling.data.repository.PlaceRepositoryImpl
 import com.traveling.data.repository.PostRepositoryImpl
+import com.traveling.domain.repository.PlaceRepository
 import com.traveling.domain.repository.PostRepository
 import dagger.Binds
 import dagger.Module
@@ -17,4 +19,10 @@ abstract class RepositoryModule {
     abstract fun bindPostRepository(
         postRepositoryImpl: PostRepositoryImpl
     ): PostRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindPlaceRepository(
+        placeRepositoryImpl: PlaceRepositoryImpl
+    ): PlaceRepository
 }

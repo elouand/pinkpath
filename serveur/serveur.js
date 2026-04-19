@@ -11,6 +11,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const cache = new Map();
 
 const JWT_SECRET = "ton_secret_ultra_confidentiel"; // Change ça pour la prod
 // 1. Configuration de la connexion PostgreSQL
@@ -20,6 +21,10 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 const app = express();
+
+// --- CACHE EN MÉMOIRE POUR LES DÉTAILS DE LIEUX ---
+const placeDetailsCache = new Map();
+const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 
 // --- CONFIGURATION ---
 // IMPORTANT : Remplace "0.0.0.0" ici par ton IP réelle (ex: 192.168.1.XX)
@@ -527,9 +532,27 @@ app.post('/api/photos/:photoId/like', async (req, res) => {
         console.error("💥 Erreur Like :", error);
         res.status(500).json({ error: "Erreur serveur" });
     }
-    /** * [GET] /api/places/nearby
+});
+
+/**
+ * [GET] /api/places/nearby
  * Récupère les lieux autour de l'utilisateur en temps réel depuis OpenStreetMap
  */
+async function fetchWithRetry(url, data, retries = 2) {
+    try {
+        return await axios.post(url, data, {
+            headers: { 'Content-Type': 'text/plain' },
+            timeout: 15000
+        });
+    } catch (error) {
+        if (retries > 0) {
+            await new Promise(r => setTimeout(r, 1000));
+            return fetchWithRetry(url, data, retries - 1);
+        }
+        throw error;
+    }
+}
+
 app.get('/api/places/nearby', async (req, res) => {
     try {
         const { lat, lon } = req.query;
@@ -538,39 +561,322 @@ app.get('/api/places/nearby', async (req, res) => {
             return res.status(400).json({ error: "Latitude et Longitude manquantes" });
         }
 
-        // On définit un rayon de 3km autour de l'utilisateur (3000 mètres)
-        const radius = 3000;
-        const overpassUrl = `https://overpass-api.de/api/interpreter`;
-        
-        // Requête Overpass : On cherche les lieux avec un nom (commerces, parcs, tourisme...)
+        const latitude = parseFloat(lat);
+        const longitude = parseFloat(lon);
+
+        if (isNaN(latitude) || isNaN(longitude)) {
+            return res.status(400).json({ error: "Coordonnées invalides" });
+        }
+
+        // 🔑 Cache (clé arrondie pour éviter trop d'entrées)
+        const cacheKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
+        if (cache.has(cacheKey)) {
+            console.log("⚡ Réponse depuis le cache");
+            return res.json(cache.get(cacheKey));
+        }
+
+        const radius = 1000;
+        const overpassUrl = "https://overpass-api.de/api/interpreter";
+
         const overpassQuery = `
-            [out:json][timeout:25];
+            [out:json][timeout:10];
             (
-              node["name"](around:${radius},${lat},${lon});
-              way["name"](around:${radius},${lat},${lon});
+                node["amenity"~"restaurant|cafe|bar|pub|fast_food|food_court"](around:${radius},${latitude},${longitude});
+                node["tourism"~"hotel|museum|attraction|gallery|viewpoint|zoo"](around:${radius},${latitude},${longitude});
+                node["leisure"~"park|garden|playground|stadium"](around:${radius},${latitude},${longitude});
             );
-            out center;
+            out body;
         `;
 
-        const response = await axios.post(overpassUrl, overpassQuery);
-        
-        // On formate les données pour ton application mobile
-        const places = response.data.elements.map(el => ({
-            id: el.id.toString(),
-            name: el.tags.name,
-            type: el.tags.amenity || el.tags.tourism || el.tags.leisure || "Lieu d'intérêt",
-            latitude: el.lat || el.center.lat,
-            longitude: el.lon || el.center.lon,
-        }));
+        let response;
+
+        try {
+            response = await fetchWithRetry(overpassUrl, overpassQuery);
+        } catch (error) {
+            if (error.response && (error.response.status === 429 || error.response.status === 504)) {
+                console.log("⚠️ Overpass surchargé → fallback cache ou vide");
+
+                if (cache.has(cacheKey)) {
+                    return res.json(cache.get(cacheKey));
+                }
+
+                return res.json([]);
+            }
+            throw error;
+        }
+
+        const places = (response.data.elements || [])
+            .filter(el => el.tags && el.tags.name && el.lat && el.lon)
+            .map(el => ({
+                id: el.id.toString(),
+                name: el.tags.name,
+                type: el.tags.amenity || el.tags.tourism || el.tags.leisure || "Lieu d'intérêt",
+                latitude: el.lat,
+                longitude: el.lon,
+            }));
+
+        // 💾 Mise en cache (TTL simple avec setTimeout)
+        cache.set(cacheKey, places);
+        setTimeout(() => cache.delete(cacheKey), 5 * 60 * 1000); // 5 minutes
 
         console.log(`📍 ${places.length} lieux trouvés autour de ${lat},${lon}`);
         res.json(places);
 
     } catch (error) {
-        console.error("💥 Erreur OSM :", error);
+        if (error.response) {
+            console.error("💥 Erreur OSM :", error.response.status, error.response.data);
+        } else {
+            console.error("💥 Erreur OSM :", error.message);
+        }
+
         res.status(500).json({ error: "Erreur lors de la récupération des lieux" });
     }
 });
+
+/**
+ * [GET] /api/places/:id
+ * Récupère les détails complets d'un lieu (photos, avis, horaires, etc.)
+ */
+app.get('/api/places/:id', async (req, res) => {
+    console.log(`🚨 FONCTION DETAILS LIEU APPELEE - ID: ${req.params.id}`);
+    try {
+        const { id } = req.params;
+        console.log(`🔍 Requête détails lieu reçue pour ID: ${id}`);
+
+        if (!id) {
+            return res.status(400).json({ error: "ID du lieu manquant" });
+        }
+
+        // Validation de l'ID
+        const numericId = parseInt(id);
+        if (isNaN(numericId) || numericId <= 0) {
+            console.log(`❌ ID invalide: ${id}`);
+            return res.status(400).json({ error: "ID du lieu invalide" });
+        }
+
+        // Vérifier le cache
+        if (placeDetailsCache.has(numericId)) {
+            const cached = placeDetailsCache.get(numericId);
+            if (Date.now() - cached.timestamp < CACHE_DURATION) {
+                console.log(`💾 Cache hit pour le lieu ${numericId}`);
+                return res.json(cached.data);
+            } else {
+                placeDetailsCache.delete(numericId);
+            }
+        }
+
+        // Utiliser API OSM directe (séquentiel pour éviter surcharge)
+        console.log(`📡 Requête API OSM directe pour ${numericId}`);
+        
+        const osmUrls = [
+            `https://api.openstreetmap.org/api/0.6/node/${numericId}.json`,
+            `https://api.openstreetmap.org/api/0.6/way/${numericId}.json`,
+            `https://api.openstreetmap.org/api/0.6/relation/${numericId}.json`
+        ];
+
+        let element = null;
+        
+        // Essayer séquentiellement (node -> way -> relation) pour éviter surcharge
+        for (const url of osmUrls) {
+            try {
+                console.log(`🔍 Tentative ${url}`);
+                const res = await axios.get(url, { timeout: 10000 }); // Timeout augmenté à 10s
+                const type = url.includes('/node/') ? 'node' : url.includes('/way/') ? 'way' : 'relation';
+                console.log(`🔍 Réponse brute ${type} pour ${numericId}:`, JSON.stringify(res.data, null, 2));
+                const data = res.data.elements && res.data.elements[0] ? res.data.elements[0] : null;
+                if (data) {
+                    console.log(`🔍 Data extraite ${type}: présente`);
+                    element = { ...data, osm_type: type };
+                    break; // On s'arrête au premier succès
+                } else {
+                    console.log(`🔍 Data extraite ${type}: absente`);
+                }
+            } catch (err) {
+                console.log(`❌ Erreur ${url}: ${err.message}`);
+            }
+        }
+
+        if (!element) {
+            console.log(`❌ Élément ${numericId} introuvable`);
+            return res.status(404).json({ error: "Lieu non trouvé" });
+        }
+
+        // Pour les ways, récupérer les coordonnées du premier node comme approximation
+        if (element.osm_type === 'way' && element.nodes && element.nodes.length > 0) {
+            console.log(`🏗️ Way détectée, récupération coordonnées du premier node ${element.nodes[0]}`);
+            try {
+                const nodeResponse = await axios.get(`https://api.openstreetmap.org/api/0.6/node/${element.nodes[0]}.json`, { timeout: 5000 });
+                const nodeData = nodeResponse.data.elements && nodeResponse.data.elements[0];
+                if (nodeData) {
+                    element.lat = nodeData.lat;
+                    element.lon = nodeData.lon;
+                    console.log(`📍 Coordonnées way approximées: ${element.lat}, ${element.lon}`);
+                }
+            } catch (nodeError) {
+                console.log(`❌ Impossible de récupérer les coordonnées de la way: ${nodeError.message}`);
+            }
+        }
+
+        const tags = element.tags || {};
+        
+        // Récupérer les coordonnées selon le type
+        let latitude = element.lat;
+        let longitude = element.lon;
+
+        if (!latitude || !longitude) {
+            console.log(`❌ Coordonnées manquantes`);
+            return res.status(404).json({ error: "Coordonnées du lieu non disponibles" });
+        }
+
+        console.log(`📍 Coordonnées: ${latitude}, ${longitude}`);
+
+        // Construction de l'objet lieu détaillé
+        const placeDetails = {
+            id: element.id.toString(),
+            name: tags.name || "Nom inconnu",
+            type: tags.amenity || tags.tourism || tags.leisure || "Lieu d'intérêt",
+            latitude: latitude,
+            longitude: longitude,
+            description: tags.description || null,
+            website: tags.website || null,
+            phone: tags.phone || tags.contact_phone || null,
+            email: tags.email || tags.contact_email || null,
+            address: {
+                street: tags['addr:street'] || null,
+                housenumber: tags['addr:housenumber'] || null,
+                city: tags['addr:city'] || null,
+                postcode: tags['addr:postcode'] || null,
+                country: tags['addr:country'] || null
+            },
+            opening_hours: tags.opening_hours || null,
+            cuisine: tags.cuisine || null,
+            wheelchair: tags.wheelchair || null,
+            fee: tags.fee || null,
+            operator: tags.operator || null,
+            osm_tags: tags, // Tous les tags OSM bruts
+            photos: [],
+            reviews: []
+        };
+
+        console.log(`📝 Objet placeDetails construit: ${placeDetails.name} (${placeDetails.type})`);
+
+        // Tentative de récupération de photos depuis Wikimedia Commons
+        if (tags.name && (tags.tourism === 'attraction' || tags.tourism === 'museum' || tags.tourism === 'gallery')) {
+            console.log(`🖼️ Recherche de photos Wikimedia pour: ${tags.name}`);
+            try {
+                const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url&generator=search&gsrsearch="${encodeURIComponent(tags.name)}"&gsrnamespace=6&iiurlwidth=300`;
+                const commonsResponse = await axios.get(commonsUrl);
+
+                if (commonsResponse.data.query && commonsResponse.data.query.pages) {
+                    const photos = Object.values(commonsResponse.data.query.pages)
+                        .slice(0, 5) // Limiter à 5 photos
+                        .filter(page => page.imageinfo && page.imageinfo[0]) // Vérifier que imageinfo existe
+                        .map(page => ({
+                            url: page.imageinfo[0].url,
+                            thumb: page.imageinfo[0].thumburl || page.imageinfo[0].url,
+                            title: page.title
+                        }));
+                    placeDetails.photos = photos;
+                    console.log(`📸 ${photos.length} photos trouvées sur Wikimedia`);
+                } else {
+                    console.log(`📸 Aucune photo trouvée sur Wikimedia`);
+                }
+            } catch (photoError) {
+                console.log(`ℹ️ Erreur récupération photos Wikimedia: ${photoError.message}`);
+            }
+        } else {
+            console.log(`ℹ️ Pas de recherche photos (lieu non touristique)`);
+        }
+
+        console.log(`📍 Détails complets récupérés pour le lieu ${id}: ${placeDetails.name}`);
+        console.log(`📤 Envoi réponse avec ${placeDetails.photos ? placeDetails.photos.length : 0} photos`);
+        
+        // Stocker en cache
+        placeDetailsCache.set(numericId, {
+            data: placeDetails,
+            timestamp: Date.now()
+        });
+        console.log(`💾 Lieu ${numericId} mis en cache (expire dans 1h)`);
+        
+        res.json(placeDetails);
+
+    } catch (error) {
+        if (error.response) {
+            const status = error.response.status;
+            console.error(`💥 Erreur OSM - HTTP ${status}`);
+            if (status === 504 || status === 429) {
+                return res.status(503).json({ error: "API OSM surchargée, veuillez réessayer" });
+            } else if (status === 400) {
+                return res.status(400).json({ error: "Paramètres invalides" });
+            }
+        } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+            console.error(`💥 Timeout OSM API`);
+            return res.status(503).json({ error: "Timeout - veuillez réessayer" });
+        } else {
+            console.error(`💥 Erreur détails lieu: ${error.message}`);
+        }
+        res.status(500).json({ error: "Erreur lors de la récupération des détails du lieu" });
+    }
+});
+
+/**
+ * [GET] /api/route
+ * Retourne un trajet de A vers B avec points, distance et duration.
+ * Requête attendue : /api/route?startLat=...&startLon=...&endLat=...&endLon=...
+ */
+app.get('/api/route', async (req, res) => {
+    try {
+        console.log("REQ QUERY:", req.query);
+        const { startLat, startLon, endLat, endLon } = req.query;
+        const requestedMode = req.query.mode || 'driving';
+        console.log("MODE RECU :", requestedMode);
+        const profileMap = {
+            driving: 'driving',
+            walking: 'walking',
+            bicycle: 'cycling'
+        };
+        const profile = profileMap[requestedMode];
+        if (!profile) {
+            return res.status(400).json({ error: "Mode invalide. Utilisez driving, walking ou bicycle." });
+        }
+        if (!startLat || !startLon || !endLat || !endLon) {
+            return res.status(400).json({ error: "startLat, startLon, endLat et endLon sont requis" });
+        }
+
+        const originLat = parseFloat(startLat);
+        const originLon = parseFloat(startLon);
+        const destinationLat = parseFloat(endLat);
+        const destinationLon = parseFloat(endLon);
+
+        if ([originLat, originLon, destinationLat, destinationLon].some(v => Number.isNaN(v))) {
+            return res.status(400).json({ error: "Coordonnées invalides" });
+        }
+
+        const osrmUrl = `https://router.project-osrm.org/route/v1/${profile}/${originLon},${originLat};${destinationLon},${destinationLat}?overview=full&geometries=geojson&steps=false`;
+        const response = await axios.get(osrmUrl, {
+            headers: { 'User-Agent': 'TravelingApp/1.0' }
+        });
+
+        if (!response.data || !response.data.routes || response.data.routes.length === 0) {
+            return res.status(404).json({ error: "Aucune route trouvée" });
+        }
+
+        const route = response.data.routes[0];
+        const coords = route.geometry.coordinates || [];
+        const points = coords.map(([lon, lat]) => ({ latitude: lat, longitude: lon }));
+
+        res.json({
+            points,
+            distance: Math.round(route.distance),
+            duration: Math.round(route.duration)
+        });
+    } catch (error) {
+        console.error("💥 Erreur route :", error.message || error);
+        if (error.response && error.response.data) {
+            console.error(error.response.data);
+        }
+        res.status(500).json({ error: "Impossible de calculer le trajet" });
+    }
 });
 
 app.patch('/api/groups/:groupId/role', async (req, res) => {

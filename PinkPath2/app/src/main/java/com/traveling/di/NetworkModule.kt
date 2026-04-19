@@ -4,6 +4,7 @@ import com.traveling.NetworkConfig
 import com.traveling.data.local.SessionManager
 import com.traveling.data.remote.AuthApi
 import com.traveling.data.remote.PhotonApi
+import com.traveling.data.remote.PlaceApi
 import com.traveling.data.remote.PostApi
 import dagger.Module
 import dagger.Provides
@@ -64,6 +65,10 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideAuthApi(retrofit: Retrofit): AuthApi = retrofit.create(AuthApi::class.java)
+
+    @Provides
+    @Singleton
+    fun providePlaceApi(retrofit: Retrofit): PlaceApi = retrofit.create(PlaceApi::class.java)
 
     @Provides
     @Singleton

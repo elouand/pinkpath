@@ -18,6 +18,7 @@ coil = "2.7.0"
 mapsCompose = "6.1.2"
 firebaseBom = "33.7.0"
 ksp = "2.1.0-1.0.29"
+osmdroid = "6.1.20"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -60,6 +61,9 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 # Google Maps
 maps-compose = { group = "com.google.maps.android", name = "maps-compose", version.ref = "mapsCompose" }
 play-services-maps = { group = "com.google.android.gms", name = "play-services-maps", version = "19.0.0" }
+
+# OSMDroid
+osmdroid = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
 
 # Firebase
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }

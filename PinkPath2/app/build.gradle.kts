@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
-    // alias(libs.plugins.google.services) // Désactivé pour permettre la compilation sans google-services.json
 }
 
 android {
@@ -77,6 +76,9 @@ dependencies {
     // Google Maps
     implementation(libs.maps.compose)
     implementation(libs.play.services.maps)
+    
+    // OSMDroid
+    implementation(libs.osmdroid)
 
     // Firebase
     implementation(platform(libs.firebase.bom))
