@@ -7,6 +7,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import com.traveling.NetworkConfig
+import com.traveling.data.local.ItineraryLocalStore
 import com.traveling.data.local.SessionManager
 import com.traveling.data.remote.PhotonApi
 import com.traveling.data.remote.PhotonFeature
@@ -31,7 +32,8 @@ import javax.inject.Inject
 class ItineraryViewModel @Inject constructor(
     private val repository: ItineraryRepository,
     private val sessionManager: SessionManager,
-    private val photonApi: PhotonApi
+    private val photonApi: PhotonApi,
+    private val localStore: ItineraryLocalStore
 ) : ViewModel() {
 
     data class UiState(
@@ -47,7 +49,9 @@ class ItineraryViewModel @Inject constructor(
         val activeRoute: List<RoutePoint>? = null,
         val editItinerary: ItineraryFull? = null,
         val isLoadingItinerary: Boolean = false,
-        val copySuccess: Boolean = false
+        val copySuccess: Boolean = false,
+        val likedIds: Set<Int> = emptySet(),
+        val isOffline: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -56,6 +60,7 @@ class ItineraryViewModel @Inject constructor(
     private var searchJob: Job? = null
 
     init {
+        _uiState.value = _uiState.value.copy(likedIds = localStore.getLikedIds())
         loadItineraries()
     }
 
@@ -85,11 +90,15 @@ class ItineraryViewModel @Inject constructor(
         durationMinutes: Int,
         mode: String,
         activities: List<String>,
-        wantsGoodWeather: Boolean = false
+        wantsGoodWeather: Boolean = false,
+        budget: Int = 0,
+        effortLevel: String = "normal",
+        weatherSensitivity: List<String> = emptyList(),
+        timeSlot: String = "all"
     ) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isGenerating = true, error = null, variants = null, goodWeatherDays = null)
-            repository.generateItineraries(locations, durationMinutes, mode, activities, wantsGoodWeather)
+            repository.generateItineraries(locations, durationMinutes, mode, activities, wantsGoodWeather, budget, effortLevel, weatherSensitivity, timeSlot)
                 .onSuccess { response ->
                     _uiState.value = _uiState.value.copy(
                         variants = response.variants,
@@ -122,9 +131,22 @@ class ItineraryViewModel @Inject constructor(
         val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
         viewModelScope.launch {
             repository.getUserItineraries(userId)
-                .onSuccess { _uiState.value = _uiState.value.copy(savedItineraries = it) }
-                .onFailure { }
+                .onSuccess { list ->
+                    localStore.saveCachedItineraries(list)
+                    _uiState.value = _uiState.value.copy(savedItineraries = list, isOffline = false)
+                }
+                .onFailure {
+                    val cached = localStore.getCachedItineraries()
+                    if (cached.isNotEmpty()) {
+                        _uiState.value = _uiState.value.copy(savedItineraries = cached, isOffline = true)
+                    }
+                }
         }
+    }
+
+    fun toggleLike(id: Int) {
+        localStore.toggleLike(id)
+        _uiState.value = _uiState.value.copy(likedIds = localStore.getLikedIds())
     }
 
     fun clearSaveSuccess() { _uiState.value = _uiState.value.copy(saveSuccess = false) }

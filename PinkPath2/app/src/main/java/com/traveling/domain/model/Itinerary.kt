@@ -7,7 +7,11 @@ data class GenerateItineraryRequest(
     val durationMinutes: Int,
     val mode: String,
     val activities: List<String>,
-    val wantsGoodWeather: Boolean = false
+    val wantsGoodWeather: Boolean = false,
+    val budget: Int = 0,
+    val effortLevel: String = "normal",
+    val weatherSensitivity: List<String> = emptyList(),
+    val timeSlot: String = "all"
 )
 
 data class WeatherDay(
@@ -21,7 +25,11 @@ data class ItineraryStep(
     val name: String,
     val type: String?,
     val lat: Double,
-    val lon: Double
+    val lon: Double,
+    val photoUrl: String? = null,
+    val openingHours: String? = null,
+    val avgCost: Int = 0,
+    val costIsReal: Boolean = false
 )
 
 data class ItineraryVariant(
@@ -29,7 +37,10 @@ data class ItineraryVariant(
     val description: String,
     val estimatedDuration: Int,
     val estimatedDistance: Int,
-    val steps: List<ItineraryStep>
+    val steps: List<ItineraryStep>,
+    val estimatedBudget: Int = 0,
+    val effortScore: Int = 1,
+    val suggestedSlot: String? = null
 )
 
 data class ItineraryVariantsResponse(

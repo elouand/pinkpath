@@ -19,12 +19,67 @@ model User {
   password     String
   email        String?       @unique
   profileUrl   String?
-  photos       Photo[]
-  members      GroupMember[]
-  comments     Comment[]
-  likes        Like[]
-  itineraries  Itinerary[]
-  joinRequests JoinRequest[]
+  photos            Photo[]
+  members           GroupMember[]
+  comments          Comment[]
+  likes             Like[]
+  itineraries       Itinerary[]
+  joinRequests      JoinRequest[]
+  followers         Follow[]         @relation("Following")
+  following         Follow[]         @relation("Follower")
+  notifications     Notification[]   @relation("ReceivedNotifications")
+  sentNotifications Notification[]   @relation("SentNotifications")
+  createdEvents     Event[]
+  eventInterests    EventInterest[]
+}
+
+model Follow {
+  id          Int      @id @default(autoincrement())
+  follower    User     @relation("Follower", fields: [followerId], references: [id])
+  followerId  Int
+  following   User     @relation("Following", fields: [followingId], references: [id])
+  followingId Int
+  notify      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  @@unique([followerId, followingId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation("ReceivedNotifications", fields: [userId], references: [id])
+  fromId    Int
+  from      User     @relation("SentNotifications", fields: [fromId], references: [id])
+  type      String
+  photoId   Int?
+  eventId   Int?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Event {
+  id          Int             @id @default(autoincrement())
+  title       String?
+  description String?
+  startAt     DateTime
+  notified    Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  group       Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId     Int
+  itinerary   Itinerary?      @relation(fields: [itineraryId], references: [id])
+  itineraryId Int?
+  createdBy   User            @relation(fields: [createdById], references: [id])
+  createdById Int
+  interested  EventInterest[]
+}
+
+model EventInterest {
+  id      Int   @id @default(autoincrement())
+  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId Int
+  user    User  @relation(fields: [userId], references: [id])
+  userId  Int
+  @@unique([eventId, userId])
 }
 
 model Itinerary {
@@ -38,6 +93,7 @@ model Itinerary {
   authorId    Int
   steps       ItineraryStep[]
   sharedPosts Photo[]         @relation("SharedItinerary")
+  events      Event[]
 }
 
 model ItineraryStep {
@@ -105,9 +161,10 @@ model Group {
   description  String?
   imageUrl     String?
   isPublic     Boolean       @default(true)
-  members      GroupMember[] // <--- ET CELLE-CI POUR LE MIROIR
+  members      GroupMember[]
   photos       Photo[]
   joinRequests JoinRequest[]
+  events       Event[]
 }
 
 model GroupMember {

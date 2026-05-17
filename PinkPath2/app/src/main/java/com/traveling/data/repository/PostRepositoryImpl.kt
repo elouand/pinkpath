@@ -1,10 +1,19 @@
 package com.traveling.data.repository
 
 import com.traveling.data.remote.*
+import com.traveling.data.remote.FollowRequest
+import com.traveling.data.remote.NotifyRequest
+import com.traveling.data.remote.ReadAllRequest
+import com.traveling.domain.model.AppNotification
+import com.traveling.domain.model.CreateEventRequest
+import com.traveling.domain.model.GroupEvent
+import com.traveling.domain.model.InterestRequest
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
 import com.traveling.domain.model.JoinRequest
+import com.traveling.domain.model.PublicUserProfile
 import com.traveling.domain.model.ShareItineraryRequest
+import com.traveling.domain.model.UserSearchResult
 import com.traveling.domain.repository.PostRepository
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -192,6 +201,95 @@ class PostRepositoryImpl @Inject constructor(
         return try {
             api.joinGroup(groupId, JoinGroupRequest(userId))
             Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun searchUsers(query: String): Result<List<UserSearchResult>> {
+        return try {
+            Result.success(api.searchUsers(query))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getUserProfile(userId: Int, followerId: Int?): Result<PublicUserProfile> {
+        return try {
+            Result.success(api.getUserProfile(userId, followerId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun followUser(userId: Int, followerId: Int): Result<Unit> {
+        return try {
+            api.followUser(userId, FollowRequest(followerId))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun unfollowUser(userId: Int, followerId: Int): Result<Unit> {
+        return try {
+            api.unfollowUser(userId, FollowRequest(followerId))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun toggleNotify(userId: Int, followerId: Int, notify: Boolean): Result<Unit> {
+        return try {
+            api.toggleNotify(userId, NotifyRequest(followerId, notify))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getNotifications(userId: Int): Result<List<AppNotification>> {
+        return try {
+            Result.success(api.getNotifications(userId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun markAllNotificationsRead(userId: Int): Result<Unit> {
+        return try {
+            api.markAllRead(ReadAllRequest(userId))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getGroupEvents(groupId: Int, userId: Int?): Result<List<GroupEvent>> {
+        return try {
+            Result.success(api.getGroupEvents(groupId, userId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun createEvent(groupId: Int, request: CreateEventRequest): Result<GroupEvent> {
+        return try {
+            Result.success(api.createEvent(groupId, request))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun toggleInterest(eventId: Int, userId: Int, interested: Boolean): Result<Int> {
+        return try {
+            val response = if (interested)
+                api.markInterested(eventId, InterestRequest(userId))
+            else
+                api.unmarkInterested(eventId, InterestRequest(userId))
+            val count = (response["interestedCount"] as? Double)?.toInt() ?: 0
+            Result.success(count)
         } catch (e: Exception) {
             Result.failure(e)
         }

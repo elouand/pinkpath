@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import com.traveling.domain.model.RouteInstruction
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -105,13 +106,25 @@ fun MapScreen(
     LaunchedEffect(hasLocationPermission) {
         if (hasLocationPermission) {
             myLocationOverlay.enableMyLocation()
-            myLocationOverlay.runOnFirstFix {
-                val location = myLocationOverlay.myLocation
-                if (location != null) {
-                    ContextCompat.getMainExecutor(context).execute {
-                        mapView.controller.animateTo(location)
-                        viewModel.updateUserLocation(location.latitude, location.longitude)
-                        viewModel.fetchNearbyPlaces(location.latitude, location.longitude)
+
+            // Si un fix est déjà disponible, centrer immédiatement
+            val existing = myLocationOverlay.myLocation
+            if (existing != null) {
+                mapView.controller.setZoom(15.0)
+                mapView.controller.setCenter(existing)
+                viewModel.updateUserLocation(existing.latitude, existing.longitude)
+                viewModel.fetchNearbyPlaces(existing.latitude, existing.longitude)
+            } else {
+                // Sinon attendre le premier fix GPS
+                myLocationOverlay.runOnFirstFix {
+                    val location = myLocationOverlay.myLocation
+                    if (location != null) {
+                        ContextCompat.getMainExecutor(context).execute {
+                            mapView.controller.setZoom(15.0)
+                            mapView.controller.setCenter(location)
+                            viewModel.updateUserLocation(location.latitude, location.longitude)
+                            viewModel.fetchNearbyPlaces(location.latitude, location.longitude)
+                        }
                     }
                 }
             }
@@ -157,8 +170,10 @@ fun MapScreen(
                 mapView.apply {
                     setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(true)
-                    controller.setZoom(6.0)
-                    controller.setCenter(GeoPoint(46.6034, 1.8883)) // France par défaut
+                    if (!hasLocationPermission) {
+                        controller.setZoom(6.0)
+                        controller.setCenter(GeoPoint(46.6034, 1.8883))
+                    }
                     overlays.add(myLocationOverlay)
 
                     addMapListener(DelayedMapListener(object : MapListener {
@@ -327,8 +342,14 @@ fun MapScreen(
         }
 
         // Floating Buttons
+        val bottomPad = when {
+            uiState.isNavigating && uiState.currentRoute != null -> 190.dp
+            uiState.currentRoute != null -> 150.dp
+            selectedPlace != null -> 200.dp
+            else -> 32.dp
+        }
         Column(
-            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = if (selectedPlace != null) 200.dp else 32.dp, end = 16.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = bottomPad, end = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (itineraryState.activeItinerary != null) {
@@ -367,13 +388,6 @@ fun MapScreen(
                     }
                 }
             }
-            if (uiState.currentRoute != null) {
-                SmallFloatingActionButton(
-                    onClick = { viewModel.clearRoute() },
-                    containerColor = Color.Red,
-                    contentColor = Color.White
-                ) { Icon(Icons.Default.Clear, contentDescription = "Effacer trajet") }
-            }
             SmallFloatingActionButton(
                 onClick = {
                     myLocationOverlay.myLocation?.let {
@@ -386,9 +400,131 @@ fun MapScreen(
             ) { Icon(Icons.Default.MyLocation, contentDescription = null) }
         }
 
-        // Panneau de détails avec bouton "Y aller"
+        // Panneau route info (route calculée, pas encore en navigation)
         AnimatedVisibility(
-            visible = selectedPlace != null,
+            visible = uiState.currentRoute != null && !uiState.isNavigating,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        val modeIcon = when (uiState.routeMode) {
+                            "walking" -> Icons.Default.DirectionsWalk
+                            "bicycle" -> Icons.Default.DirectionsBike
+                            else -> Icons.Default.DirectionsCar
+                        }
+                        Icon(modeIcon, contentDescription = null, tint = TravelingDeepPurple, modifier = Modifier.size(24.dp))
+                        Text(
+                            formatDistance(uiState.routeDistance),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text("·", color = Color.Gray)
+                        Text(
+                            formatDuration(uiState.routeDuration),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.Gray
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { viewModel.startNavigation() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple)
+                        ) {
+                            Icon(Icons.Default.Navigation, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Démarrer")
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.clearRoute() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Annuler")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Panneau de navigation
+        AnimatedVisibility(
+            visible = uiState.isNavigating && uiState.currentRoute != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            val instructions = uiState.routeInstructions
+            val idx = uiState.currentInstructionIndex
+            val current = instructions.getOrNull(idx)
+
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    if (current != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = directionIcon(current.direction),
+                                contentDescription = null,
+                                tint = TravelingDeepPurple,
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(current.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(formatDistance(current.distance), color = Color.Gray, fontSize = 13.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                if (instructions.size > 1) {
+                                    IconButton(
+                                        onClick = { viewModel.prevInstruction() },
+                                        enabled = idx > 0
+                                    ) { Icon(Icons.Default.ChevronLeft, contentDescription = "Précédent") }
+                                    IconButton(
+                                        onClick = { viewModel.nextInstruction() },
+                                        enabled = idx < instructions.size - 1
+                                    ) { Icon(Icons.Default.ChevronRight, contentDescription = "Suivant") }
+                                }
+                                Text("${idx + 1}/${instructions.size}", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically))
+                            }
+                            Button(
+                                onClick = { viewModel.clearRoute() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                            ) {
+                                Text("Arrêter")
+                            }
+                        }
+                    } else {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Navigation en cours", fontWeight = FontWeight.Bold)
+                            Button(
+                                onClick = { viewModel.clearRoute() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                            ) { Text("Arrêter") }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Panneau de détails POI (masqué si une route est active)
+        AnimatedVisibility(
+            visible = selectedPlace != null && uiState.currentRoute == null,
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter)
@@ -408,7 +544,6 @@ fun MapScreen(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         if (place.id.isNotEmpty()) {
-                            // Lieu POI normal : Détails + Y aller
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = { onPlaceClick(place.id) }, modifier = Modifier.weight(1f)) {
                                     Text("Détails")
@@ -424,7 +559,6 @@ fun MapScreen(
                                 }
                             }
                         } else {
-                            // Étape d'itinéraire : uniquement Détails (recherche OSM par nom/coords)
                             OutlinedButton(
                                 onClick = { viewModel.searchPlaceForNavigation(place.name, place.latitude, place.longitude) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -498,5 +632,34 @@ private fun startRoute(viewModel: MapViewModel, locationOverlay: MyLocationNewOv
         )
     } else {
         Log.w("MapScreen", "⚠️ Position ou destination nulle")
+    }
+}
+
+fun formatDuration(seconds: Int): String {
+    return when {
+        seconds < 60 -> "< 1 min"
+        seconds < 3600 -> "${seconds / 60} min"
+        else -> "${seconds / 3600}h${(seconds % 3600) / 60}min"
+    }
+}
+
+fun formatDistance(meters: Int): String {
+    return if (meters < 1000) {
+        "$meters m"
+    } else {
+        val km = meters / 1000.0
+        "%.1f km".format(km)
+    }
+}
+
+@Composable
+fun directionIcon(direction: String): androidx.compose.ui.graphics.vector.ImageVector {
+    return when {
+        direction == "depart" -> Icons.Default.Start
+        direction == "arrive" -> Icons.Default.Flag
+        direction.contains("left") -> Icons.Default.TurnLeft
+        direction.contains("right") -> Icons.Default.TurnRight
+        direction == "roundabout" || direction == "rotary" -> Icons.Default.RotateRight
+        else -> Icons.Default.Straight
     }
 }

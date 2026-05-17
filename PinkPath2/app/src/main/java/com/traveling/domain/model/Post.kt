@@ -11,6 +11,41 @@ data class SharedItineraryData(
     val steps: List<ItineraryStepFull> = emptyList()
 )
 
+data class UserSearchResult(
+    val id: Int,
+    val username: String,
+    val pseudo: String? = null,
+    val profileUrl: String? = null,
+    val followersCount: Int = 0
+)
+
+data class PublicUserProfile(
+    val id: Int,
+    val username: String,
+    val pseudo: String? = null,
+    val profileUrl: String? = null,
+    val followersCount: Int = 0,
+    val followingCount: Int = 0,
+    val isFollowing: Boolean = false,
+    val notifyEnabled: Boolean = false,
+    val posts: List<Post> = emptyList()
+)
+
+data class AppNotification(
+    val id: Int,
+    val type: String,
+    val photoId: Int? = null,
+    val eventId: Int? = null,
+    val groupId: Int? = null,
+    val eventTitle: String? = null,
+    val read: Boolean,
+    val createdAt: String,
+    val fromId: Int,
+    val fromUsername: String,
+    val fromPseudo: String? = null,
+    val fromProfileUrl: String? = null
+)
+
 data class Post(
     val id: String,
     val title: String? = null,

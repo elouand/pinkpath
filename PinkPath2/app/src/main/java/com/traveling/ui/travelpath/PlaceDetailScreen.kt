@@ -17,7 +17,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.filled.*
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -199,75 +201,272 @@ fun PlaceDetailsContent(
     onLikeClick: (String) -> Unit
 ) {
     val context = LocalContext.current
-    
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).padding(bottom = 80.dp)) {
-        if (details.photos.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(200.dp)) {
+
+    fun translateType(type: String): String = when (type.lowercase()) {
+        "restaurant" -> "Restaurant"
+        "museum" -> "Musée"
+        "park" -> "Parc"
+        "cafe", "coffee_shop" -> "Café"
+        "bar" -> "Bar"
+        "hotel" -> "Hôtel"
+        "attraction" -> "Attraction"
+        "gallery" -> "Galerie"
+        "bakery" -> "Boulangerie"
+        "fast_food" -> "Restauration rapide"
+        "theatre" -> "Théâtre"
+        "cinema" -> "Cinéma"
+        "library" -> "Bibliothèque"
+        "supermarket" -> "Supermarché"
+        "pharmacy" -> "Pharmacie"
+        "hospital" -> "Hôpital"
+        "school" -> "École"
+        "church" -> "Église"
+        "viewpoint" -> "Point de vue"
+        "beach" -> "Plage"
+        "garden" -> "Jardin"
+        "playground" -> "Aire de jeux"
+        else -> type.replaceFirstChar { it.uppercase() }
+    }
+
+    fun typeColor(type: String): Color = when (type.lowercase()) {
+        "restaurant", "fast_food", "bakery" -> Color(0xFFE64A19)
+        "cafe", "bar" -> Color(0xFF6D4C41)
+        "museum", "gallery", "attraction" -> Color(0xFF1565C0)
+        "park", "garden", "viewpoint" -> Color(0xFF2E7D32)
+        "hotel" -> Color(0xFF1976D2)
+        "cinema", "theatre" -> Color(0xFF6A1B9A)
+        "hospital", "pharmacy" -> Color(0xFFC62828)
+        else -> TravelingDeepPurple
+    }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 80.dp)) {
+        // 1. Hero image
+        if (details.wikiImage != null) {
+            AsyncImage(
+                model = details.wikiImage,
+                contentDescription = details.name,
+                modifier = Modifier.fillMaxWidth().height(200.dp),
+                contentScale = ContentScale.Crop
+            )
+        } else if (details.photos.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.height(200.dp).padding(horizontal = 16.dp)
+            ) {
                 items(details.photos) { photo ->
-                    Card { AsyncImage(model = photo.url, contentDescription = null, modifier = Modifier.fillMaxHeight().width(300.dp), contentScale = ContentScale.Crop) }
+                    Card {
+                        AsyncImage(
+                            model = photo.url,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxHeight().width(300.dp),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-        
-        Text(details.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(details.type, color = TravelingDeepPurple)
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        OutlinedButton(
-            onClick = {
-                val gmmIntentUri = Uri.parse("geo:0,0?q=${details.latitude},${details.longitude}(${Uri.encode(details.name)})")
-                val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
-                mapIntent.setPackage("com.google.android.apps.maps")
-                if (mapIntent.resolveActivity(context.packageManager) == null) {
-                    mapIntent.setPackage(null)
-                }
-                context.startActivity(mapIntent)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = TravelingDeepPurple)
-        ) {
-            Icon(Icons.Default.Map, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Voir sur Google Maps")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            // 2. Nom + type
+            Text(details.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
-        if (details.address != null) {
-            val addr = listOfNotNull(details.address.housenumber, details.address.street, details.address.city).joinToString(" ")
-            if (addr.isNotBlank()) InfoItem(icon = Icons.Default.LocationOn, text = addr)
-        }
-        if (details.phone != null) InfoItem(icon = Icons.Default.Phone, text = details.phone)
-        if (details.website != null) InfoItem(icon = Icons.Default.Language, text = details.website)
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text("Posts sur ce lieu", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TravelingDeepPurple)
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (posts.isEmpty()) {
-            Text("Aucun post pour le moment. Soyez le premier !", color = Color.Gray, fontSize = 14.sp)
-        } else {
-            posts.forEach { post ->
-                PostCard(
-                    title = post.content ?: post.title ?: "Sans titre",
-                    tags = post.tags?.map { it to TravelingTagBlue } ?: emptyList(),
-                    location = post.title ?: details.name,
-                    author = post.authorName ?: "Anonyme",
-                    authorProfileUrl = post.authorAvatar,
-                    imageUrl = post.fullImageUrl,
-                    likes = post.likes.toString(),
-                    comments = post.commentsCount.toString(),
-                    isLiked = post.isLiked,
-                    onLikeClick = { onLikeClick(post.id) },
-                    onClick = { onPostClick(post.id) },
-                    sharedItinerary = post.sharedItinerary
+            // 4. Chip catégorie
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = typeColor(details.type).copy(alpha = 0.15f),
+                border = BorderStroke(1.dp, typeColor(details.type).copy(alpha = 0.5f))
+            ) {
+                Text(
+                    translateType(details.type),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = typeColor(details.type),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
                 )
+            }
+
+            // 3. Status ouvert/fermé
+            if (details.isOpenNow != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (details.isOpenNow) Color(0xFF2E7D32).copy(alpha = 0.15f) else Color(0xFFC62828).copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            if (details.isOpenNow) "Ouvert" else "Fermé",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            color = if (details.isOpenNow) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                    if (details.opening_hours != null) {
+                        Icon(Icons.Default.Schedule, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                        Text(details.opening_hours, color = Color.Gray, fontSize = 13.sp)
+                    }
+                }
+            } else if (details.opening_hours != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Schedule, contentDescription = null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(details.opening_hours, fontSize = 13.sp)
+                }
+            }
+
+            // 5. Résumé Wikipedia
+            if (details.wikiSummary != null) {
                 Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+                        Icon(Icons.Default.Info, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(18.dp).padding(top = 2.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            details.wikiSummary,
+                            color = Color.Gray,
+                            fontSize = 13.sp,
+                            fontStyle = FontStyle.Italic,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 6. Infos de contact
+            if (details.phone != null) {
+                ClickableInfoItem(
+                    icon = Icons.Default.Phone,
+                    text = details.phone,
+                    onClick = {
+                        try { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${details.phone}"))) } catch (_: Exception) {}
+                    }
+                )
+            }
+            if (details.website != null) {
+                ClickableInfoItem(
+                    icon = Icons.Default.Language,
+                    text = details.website,
+                    onClick = {
+                        try {
+                            val url = if (details.website.startsWith("http")) details.website else "https://${details.website}"
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        } catch (_: Exception) {}
+                    }
+                )
+            }
+            if (details.email != null) {
+                ClickableInfoItem(
+                    icon = Icons.Default.Email,
+                    text = details.email,
+                    onClick = {
+                        try { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${details.email}"))) } catch (_: Exception) {}
+                    }
+                )
+            }
+
+            // 7. Détails pratiques
+            if (details.address != null) {
+                val addr = listOfNotNull(details.address.housenumber, details.address.street, details.address.city).joinToString(" ")
+                if (addr.isNotBlank()) InfoItem(icon = Icons.Default.LocationOn, text = addr)
+            }
+            if (details.cuisine != null) {
+                InfoItem(icon = Icons.Default.RestaurantMenu, text = details.cuisine.replaceFirstChar { it.uppercase() })
+            }
+            if (details.fee != null) {
+                val feeText = when (details.fee.lowercase()) {
+                    "yes" -> "Payant"
+                    "no" -> "Gratuit"
+                    else -> details.fee
+                }
+                InfoItem(icon = Icons.Default.Euro, text = feeText)
+            }
+            if (details.wheelchair != null) {
+                val wText = when (details.wheelchair.lowercase()) {
+                    "yes", "designated" -> "Accessible PMR"
+                    "no" -> "Non accessible PMR"
+                    "limited" -> "Accès PMR limité"
+                    else -> details.wheelchair
+                }
+                InfoItem(icon = Icons.Default.Accessible, text = wText)
+            }
+            if (details.operator != null) {
+                InfoItem(icon = Icons.Default.Business, text = "Exploitant : ${details.operator}")
+            }
+            if (details.brand != null) {
+                InfoItem(icon = Icons.Default.Store, text = "Marque : ${details.brand}")
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 8. Bouton Google Maps
+            OutlinedButton(
+                onClick = {
+                    val gmmIntentUri = Uri.parse("geo:0,0?q=${details.latitude},${details.longitude}(${Uri.encode(details.name)})")
+                    val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
+                    mapIntent.setPackage("com.google.android.apps.maps")
+                    if (mapIntent.resolveActivity(context.packageManager) == null) {
+                        mapIntent.setPackage(null)
+                    }
+                    context.startActivity(mapIntent)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TravelingDeepPurple)
+            ) {
+                Icon(Icons.Default.Map, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Voir sur Google Maps")
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 9. Posts
+            Text("Posts sur ce lieu", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TravelingDeepPurple)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (posts.isEmpty()) {
+                Text("Aucun post pour le moment. Soyez le premier !", color = Color.Gray, fontSize = 14.sp)
+            } else {
+                posts.forEach { post ->
+                    PostCard(
+                        title = post.content ?: post.title ?: "Sans titre",
+                        tags = post.tags?.map { it to TravelingTagBlue } ?: emptyList(),
+                        location = post.title ?: details.name,
+                        author = post.authorName ?: "Anonyme",
+                        authorProfileUrl = post.authorAvatar,
+                        imageUrl = post.fullImageUrl,
+                        likes = post.likes.toString(),
+                        comments = post.commentsCount.toString(),
+                        isLiked = post.isLiked,
+                        onLikeClick = { onLikeClick(post.id) },
+                        onClick = { onPostClick(post.id) },
+                        sharedItinerary = post.sharedItinerary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
         }
+    }
+}
+
+@Composable
+fun ClickableInfoItem(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = TravelingDeepPurple, modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text, color = TravelingDeepPurple)
     }
 }
 

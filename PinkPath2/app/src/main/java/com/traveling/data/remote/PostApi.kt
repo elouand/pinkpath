@@ -1,10 +1,16 @@
 package com.traveling.data.remote
 
 import com.google.gson.annotations.SerializedName
+import com.traveling.domain.model.AppNotification
+import com.traveling.domain.model.CreateEventRequest
+import com.traveling.domain.model.GroupEvent
+import com.traveling.domain.model.InterestRequest
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
 import com.traveling.domain.model.JoinRequest
+import com.traveling.domain.model.PublicUserProfile
 import com.traveling.domain.model.ShareItineraryRequest
+import com.traveling.domain.model.UserSearchResult
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.http.*
@@ -36,6 +42,10 @@ data class AddUserToGroupRequest(
 data class JoinGroupRequest(
     val userId: Int
 )
+
+data class FollowRequest(val followerId: Int)
+data class NotifyRequest(val followerId: Int, val notify: Boolean)
+data class ReadAllRequest(val userId: Int)
 
 interface PostApi {
     @GET("photos")
@@ -98,4 +108,52 @@ interface PostApi {
 
     @POST("groups/{groupId}/join")
     suspend fun joinGroup(@Path("groupId") groupId: Int, @Body request: JoinGroupRequest): Map<String, Any>
+
+    @GET("users/search")
+    suspend fun searchUsers(@Query("query") query: String): List<UserSearchResult>
+
+    @GET("users/{userId}/profile")
+    suspend fun getUserProfile(
+        @Path("userId") userId: Int,
+        @Query("followerId") followerId: Int? = null
+    ): PublicUserProfile
+
+    @POST("users/{userId}/follow")
+    suspend fun followUser(@Path("userId") userId: Int, @Body request: FollowRequest): Map<String, Any>
+
+    @DELETE("users/{userId}/follow")
+    suspend fun unfollowUser(@Path("userId") userId: Int, @Body request: FollowRequest): Map<String, Any>
+
+    @PUT("users/{userId}/follow/notify")
+    suspend fun toggleNotify(@Path("userId") userId: Int, @Body request: NotifyRequest): Map<String, Any>
+
+    @GET("users/{userId}/notifications")
+    suspend fun getNotifications(@Path("userId") userId: Int): List<AppNotification>
+
+    @PUT("notifications/read-all")
+    suspend fun markAllRead(@Body request: ReadAllRequest): Map<String, Any>
+
+    @GET("groups/{groupId}/events")
+    suspend fun getGroupEvents(
+        @Path("groupId") groupId: Int,
+        @Query("userId") userId: Int? = null
+    ): List<GroupEvent>
+
+    @POST("groups/{groupId}/events")
+    suspend fun createEvent(
+        @Path("groupId") groupId: Int,
+        @Body request: CreateEventRequest
+    ): GroupEvent
+
+    @POST("events/{eventId}/interest")
+    suspend fun markInterested(
+        @Path("eventId") eventId: Int,
+        @Body request: InterestRequest
+    ): Map<String, Any>
+
+    @DELETE("events/{eventId}/interest")
+    suspend fun unmarkInterested(
+        @Path("eventId") eventId: Int,
+        @Body request: InterestRequest
+    ): Map<String, Any>
 }

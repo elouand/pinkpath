@@ -14,6 +14,8 @@ import com.traveling.domain.model.SavedItinerary
 import com.traveling.domain.model.UpdateItineraryRequest
 import com.traveling.domain.model.UpdateStepRequest
 import com.traveling.domain.repository.ItineraryRepository
+import org.json.JSONObject
+import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,14 +29,29 @@ class ItineraryRepositoryImpl @Inject constructor(
         durationMinutes: Int,
         mode: String,
         activities: List<String>,
-        wantsGoodWeather: Boolean
+        wantsGoodWeather: Boolean,
+        budget: Int,
+        effortLevel: String,
+        weatherSensitivity: List<String>,
+        timeSlot: String
     ): Result<ItineraryVariantsResponse> = try {
         val response = api.generateItineraries(
-            GenerateItineraryRequest(locations, durationMinutes, mode, activities, wantsGoodWeather)
+            GenerateItineraryRequest(locations, durationMinutes, mode, activities, wantsGoodWeather, budget, effortLevel, weatherSensitivity, timeSlot)
         )
         Result.success(response)
+    } catch (e: HttpException) {
+        val serverMessage = try {
+            val body = e.response()?.errorBody()?.string() ?: ""
+            JSONObject(body).optString("error", null)
+        } catch (_: Exception) { null }
+        Result.failure(Exception(serverMessage ?: e.message ?: "Erreur serveur"))
     } catch (e: Exception) {
-        Result.failure(e)
+        val msg = when {
+            e.message?.contains("timeout", ignoreCase = true) == true -> "Délai dépassé — réseau lent ou serveur surchargé, réessayez"
+            e.message?.contains("Unable to resolve host") == true -> "Impossible de joindre le serveur, vérifiez votre connexion"
+            else -> e.message ?: "Erreur réseau"
+        }
+        Result.failure(Exception(msg))
     }
 
     override suspend fun saveItinerary(

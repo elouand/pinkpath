@@ -6,9 +6,14 @@ import com.traveling.data.local.SessionManager
 import com.traveling.data.remote.CommentResponse
 import com.traveling.data.remote.PhotonApi
 import com.traveling.data.remote.PhotonFeature
+import com.traveling.domain.model.AppNotification
+import com.traveling.domain.model.CreateEventRequest
+import com.traveling.domain.model.GroupEvent
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
 import com.traveling.domain.model.JoinRequest
+import com.traveling.domain.model.PublicUserProfile
+import com.traveling.domain.model.UserSearchResult
 import com.traveling.domain.repository.PostRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -58,7 +63,23 @@ class PostViewModel @Inject constructor(
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage = _toastMessage.asStateFlow()
 
+    private val _userSearchResults = MutableStateFlow<List<UserSearchResult>>(emptyList())
+    val userSearchResults: StateFlow<List<UserSearchResult>> = _userSearchResults
+
+    private val _publicProfile = MutableStateFlow<PublicUserProfile?>(null)
+    val publicProfile: StateFlow<PublicUserProfile?> = _publicProfile
+
+    private val _isLoadingProfile = MutableStateFlow(false)
+    val isLoadingProfile: StateFlow<Boolean> = _isLoadingProfile
+
+    private val _notifications = MutableStateFlow<List<AppNotification>>(emptyList())
+    val notifications: StateFlow<List<AppNotification>> = _notifications
+
+    private val _unreadCount = MutableStateFlow(0)
+    val unreadNotificationCount: StateFlow<Int> = _unreadCount
+
     private var searchJob: Job? = null
+    private var userSearchJob: Job? = null
 
     init {
         loadPosts()
@@ -289,4 +310,130 @@ class PostViewModel @Inject constructor(
     }
 
     fun clearShareSuccess() { _shareSuccess.value = false }
+
+    fun searchUsers(query: String) {
+        userSearchJob?.cancel()
+        if (query.isBlank()) {
+            _userSearchResults.value = emptyList()
+            return
+        }
+        userSearchJob = viewModelScope.launch {
+            delay(200)
+            repository.searchUsers(query).onSuccess {
+                _userSearchResults.value = it
+            }.onFailure {
+                _userSearchResults.value = emptyList()
+            }
+        }
+    }
+
+    fun clearUserSearch() { _userSearchResults.value = emptyList() }
+
+    fun loadPublicProfile(userId: Int) {
+        val myId = sessionManager.getUserId()?.toIntOrNull()
+        viewModelScope.launch {
+            _isLoadingProfile.value = true
+            _publicProfile.value = null
+            repository.getUserProfile(userId, myId).onSuccess {
+                _publicProfile.value = it
+            }.onFailure { handleError(it, "profil") }
+            _isLoadingProfile.value = false
+        }
+    }
+
+    fun followUser(targetUserId: Int) {
+        val myId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.followUser(targetUserId, myId).onSuccess {
+                _publicProfile.value = _publicProfile.value?.copy(
+                    isFollowing = true,
+                    followersCount = (_publicProfile.value?.followersCount ?: 0) + 1
+                )
+            }.onFailure { handleError(it, "follow") }
+        }
+    }
+
+    fun unfollowUser(targetUserId: Int) {
+        val myId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.unfollowUser(targetUserId, myId).onSuccess {
+                _publicProfile.value = _publicProfile.value?.copy(
+                    isFollowing = false,
+                    notifyEnabled = false,
+                    followersCount = maxOf(0, (_publicProfile.value?.followersCount ?: 1) - 1)
+                )
+            }.onFailure { handleError(it, "unfollow") }
+        }
+    }
+
+    fun toggleNotify(targetUserId: Int, notify: Boolean) {
+        val myId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.toggleNotify(targetUserId, myId, notify).onSuccess {
+                _publicProfile.value = _publicProfile.value?.copy(notifyEnabled = notify)
+            }.onFailure { handleError(it, "notification") }
+        }
+    }
+
+    fun loadNotifications() {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.getNotifications(userId).onSuccess {
+                _notifications.value = it
+                _unreadCount.value = it.count { n -> !n.read }
+            }
+        }
+    }
+
+    // ── Events ──────────────────────────────────────────────────────────────
+
+    private val _groupEvents = MutableStateFlow<List<GroupEvent>>(emptyList())
+    val groupEvents: StateFlow<List<GroupEvent>> = _groupEvents
+
+    private val _eventCreateSuccess = MutableStateFlow(false)
+    val eventCreateSuccess: StateFlow<Boolean> = _eventCreateSuccess
+
+    fun loadGroupEvents(groupId: Int) {
+        val userId = sessionManager.getUserId()?.toIntOrNull()
+        viewModelScope.launch {
+            repository.getGroupEvents(groupId, userId).onSuccess {
+                _groupEvents.value = it
+            }
+        }
+    }
+
+    fun createEvent(groupId: Int, title: String?, description: String?, startAt: String, itineraryId: Int?) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.createEvent(groupId, CreateEventRequest(title, description, startAt, itineraryId, userId))
+                .onSuccess {
+                    _groupEvents.value = _groupEvents.value + it
+                    _eventCreateSuccess.value = true
+                }
+                .onFailure { handleError(it, "création événement") }
+        }
+    }
+
+    fun clearEventCreateSuccess() { _eventCreateSuccess.value = false }
+
+    fun toggleInterest(eventId: Int, currentlyInterested: Boolean) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.toggleInterest(eventId, userId, !currentlyInterested).onSuccess { newCount ->
+                _groupEvents.value = _groupEvents.value.map { ev ->
+                    if (ev.id == eventId) ev.copy(isInterested = !currentlyInterested, interestedCount = newCount) else ev
+                }
+            }
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.markAllNotificationsRead(userId).onSuccess {
+                _notifications.value = _notifications.value.map { it.copy(read = true) }
+                _unreadCount.value = 0
+            }
+        }
+    }
 }

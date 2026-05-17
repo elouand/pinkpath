@@ -159,6 +159,21 @@ fun TravelPathScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (selectedTab == "itinéraires") {
+                        if (itineraryState.isOffline) {
+                            item {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    color = Color(0xFFFFF3E0),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.WifiOff, null, tint = Color(0xFFE65100), modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Mode hors-ligne – données en cache", fontSize = 12.sp, color = Color(0xFFE65100))
+                                    }
+                                }
+                            }
+                        }
                         if (filteredItineraries.isEmpty()) {
                             item {
                                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -173,6 +188,8 @@ fun TravelPathScreen(
                             items(filteredItineraries) { itinerary ->
                                 SavedItineraryCard(
                                     itinerary = itinerary,
+                                    isLiked = itineraryState.likedIds.contains(itinerary.id),
+                                    onToggleLike = { itineraryViewModel.toggleLike(itinerary.id) },
                                     onModify = { itineraryViewModel.startEdit(itinerary); onNavigateToEditItinerary() },
                                     onStart = { itineraryViewModel.startItinerary(itinerary); onNavigateToMap() }
                                 )
@@ -224,7 +241,13 @@ fun TabItem(text: String, isSelected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun SavedItineraryCard(itinerary: SavedItinerary, onModify: () -> Unit, onStart: () -> Unit) {
+fun SavedItineraryCard(
+    itinerary: SavedItinerary,
+    isLiked: Boolean = false,
+    onToggleLike: () -> Unit = {},
+    onModify: () -> Unit,
+    onStart: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)),
@@ -232,7 +255,17 @@ fun SavedItineraryCard(itinerary: SavedItinerary, onModify: () -> Unit, onStart:
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(itinerary.name, style = MaterialTheme.typography.titleMedium, color = TravelingDeepPurple, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(itinerary.name, style = MaterialTheme.typography.titleMedium, color = TravelingDeepPurple, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                IconButton(onClick = onToggleLike, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        null,
+                        tint = if (isLiked) Color(0xFFE91E63) else Color.Gray,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

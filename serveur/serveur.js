@@ -30,7 +30,7 @@ const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 // --- CONFIGURATION ---
 // IMPORTANT : Remplace "0.0.0.0" ici par ton IP réelle (ex: 192.168.1.XX)
 // pour que ton téléphone puisse charger les images !
-const SERVER_IP = "192.168.1.187"//"192.168.1.25"; 
+const SERVER_IP = "192.168.1.113"//"192.168.1.25"; 
 const PORT = 3000;
 const BASE_URL = `http://${SERVER_IP}:${PORT}`;
 
@@ -98,6 +98,23 @@ app.post('/api/photos', upload.fields([
         });
 
         res.status(201).json(photo);
+
+        // Notifier les abonnés qui ont activé la cloche
+        if (authorId) {
+            const followers = await prisma.follow.findMany({
+                where: { followingId: parseInt(authorId), notify: true }
+            });
+            if (followers.length > 0) {
+                await prisma.notification.createMany({
+                    data: followers.map(f => ({
+                        userId: f.followerId,
+                        fromId: parseInt(authorId),
+                        type: 'new_post',
+                        photoId: photo.id
+                    }))
+                });
+            }
+        }
     } catch (error) {
         console.error("💥 Erreur upload :", error);
         res.status(500).json({ error: "Erreur serveur" });
@@ -893,6 +910,11 @@ app.get('/api/places/:id', async (req, res) => {
             wheelchair: tags.wheelchair || null,
             fee: tags.fee || null,
             operator: tags.operator || null,
+            brand: tags.brand || null,
+            capacity: tags.capacity || null,
+            isOpenNow: computeIsOpenNow(tags.opening_hours || null),
+            wikiSummary: null,
+            wikiImage: null,
             osm_tags: tags, // Tous les tags OSM bruts
             photos: [],
             reviews: []
@@ -900,12 +922,12 @@ app.get('/api/places/:id', async (req, res) => {
 
         console.log(`📝 Objet placeDetails construit: ${placeDetails.name} (${placeDetails.type})`);
 
-        // Tentative de récupération de photos depuis Wikimedia Commons
-        if (tags.name && (tags.tourism === 'attraction' || tags.tourism === 'museum' || tags.tourism === 'gallery')) {
+        // Tentative de récupération de photos depuis Wikimedia Commons (tous les lieux nommés)
+        if (tags.name) {
             console.log(`🖼️ Recherche de photos Wikimedia pour: ${tags.name}`);
             try {
                 const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url&generator=search&gsrsearch="${encodeURIComponent(tags.name)}"&gsrnamespace=6&iiurlwidth=300`;
-                const commonsResponse = await axios.get(commonsUrl);
+                const commonsResponse = await axios.get(commonsUrl, { timeout: 5000 });
 
                 if (commonsResponse.data.query && commonsResponse.data.query.pages) {
                     const photos = Object.values(commonsResponse.data.query.pages)
@@ -924,8 +946,18 @@ app.get('/api/places/:id', async (req, res) => {
             } catch (photoError) {
                 console.log(`ℹ️ Erreur récupération photos Wikimedia: ${photoError.message}`);
             }
+
+            // Récupération infos Wikipedia
+            try {
+                const wikiInfo = await fetchWikipediaInfo(tags.name);
+                placeDetails.wikiSummary = wikiInfo?.summary || null;
+                placeDetails.wikiImage = wikiInfo?.imageUrl || null;
+                console.log(`📖 Wikipedia: image=${!!placeDetails.wikiImage}, summary=${!!placeDetails.wikiSummary}`);
+            } catch (wikiError) {
+                console.log(`ℹ️ Erreur Wikipedia: ${wikiError.message}`);
+            }
         } else {
-            console.log(`ℹ️ Pas de recherche photos (lieu non touristique)`);
+            console.log(`ℹ️ Pas de recherche photos/wiki (lieu sans nom)`);
         }
 
         console.log(`📍 Détails complets récupérés pour le lieu ${id}: ${placeDetails.name}`);
@@ -958,6 +990,32 @@ app.get('/api/places/:id', async (req, res) => {
         res.status(500).json({ error: "Erreur lors de la récupération des détails du lieu" });
     }
 });
+
+function formatInstruction(type, modifier, name) {
+    const on = name ? ` sur ${name}` : '';
+    switch (type) {
+        case 'depart':
+            return name ? `Partir sur ${name}` : 'Partir';
+        case 'arrive':
+            return "Vous êtes arrivé";
+        case 'turn':
+            if (modifier === 'left' || modifier === 'sharp left' || modifier === 'slight left')
+                return `Tourner à gauche${on}`;
+            if (modifier === 'right' || modifier === 'sharp right' || modifier === 'slight right')
+                return `Tourner à droite${on}`;
+            return `Continuer tout droit${on}`;
+        case 'new name':
+            return `Continuer sur ${name || 'la route'}`;
+        case 'roundabout':
+        case 'rotary':
+            return 'Prendre le rond-point';
+        case 'exit roundabout':
+        case 'exit rotary':
+            return 'Sortir du rond-point';
+        default:
+            return `Continuer${on}`;
+    }
+}
 
 /**
  * [GET] /api/route
@@ -992,7 +1050,7 @@ app.get('/api/route', async (req, res) => {
             return res.status(400).json({ error: "Coordonnées invalides" });
         }
 
-        const osrmUrl = `https://router.project-osrm.org/route/v1/${profile}/${originLon},${originLat};${destinationLon},${destinationLat}?overview=full&geometries=geojson&steps=false`;
+        const osrmUrl = `https://router.project-osrm.org/route/v1/${profile}/${originLon},${originLat};${destinationLon},${destinationLat}?overview=full&geometries=geojson&steps=true`;
         const response = await axios.get(osrmUrl, {
             headers: { 'User-Agent': 'TravelingApp/1.0' }
         });
@@ -1005,10 +1063,25 @@ app.get('/api/route', async (req, res) => {
         const coords = route.geometry.coordinates || [];
         const points = coords.map(([lon, lat]) => ({ latitude: lat, longitude: lon }));
 
+        // Parse steps for turn-by-turn instructions
+        const rawSteps = route.legs ? route.legs.flatMap(leg => leg.steps || []) : [];
+        const instructions = rawSteps.map(step => {
+            const type = step.maneuver?.type || 'straight';
+            const modifier = step.maneuver?.modifier || '';
+            const name = step.name || '';
+            return {
+                text: formatInstruction(type, modifier, name),
+                distance: Math.round(step.distance),
+                duration: Math.round(step.duration),
+                direction: type
+            };
+        });
+
         res.json({
             points,
             distance: Math.round(route.distance),
-            duration: Math.round(route.duration)
+            duration: Math.round(route.duration),
+            instructions
         });
     } catch (error) {
         console.error("💥 Erreur route :", error.message || error);
@@ -1086,7 +1159,7 @@ async function getElevations(coords) {
     }
 }
 
-function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed) {
+function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed, maxStepDist = Infinity) {
     let remaining = durationMin;
     let curLat = startLat, curLon = startLon, curElev = startElev;
     const steps = [];
@@ -1097,19 +1170,96 @@ function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed)
         let bestIdx = -1, bestDist = Infinity;
         for (let i = 0; i < pool.length; i++) {
             const d = haversine(curLat, curLon, pool[i].lat, pool[i].lon);
-            if (d < bestDist) { bestDist = d; bestIdx = i; }
+            if (d < bestDist && d <= maxStepDist) { bestDist = d; bestIdx = i; }
         }
+        if (bestIdx === -1) break;
         const poi = pool[bestIdx];
         const adjSpeed = speed * toblerFactor((poi.elev || 0) - curElev, bestDist);
         const travelMin = bestDist / adjSpeed;
         if (travelMin + VISIT_TIME > remaining) break;
         pool.splice(bestIdx, 1);
-        steps.push({ name: poi.name, type: poi.type, lat: poi.lat, lon: poi.lon });
+        steps.push({ name: poi.name, type: poi.type, lat: poi.lat, lon: poi.lon, openingHours: poi.openingHours || null, avgCost: poi.avgCost || 0, costIsReal: poi.costIsReal || false });
         totalDist += bestDist;
         remaining -= travelMin + VISIT_TIME;
         curLat = poi.lat; curLon = poi.lon; curElev = poi.elev || 0;
     }
     return { steps, totalDist: Math.round(totalDist), usedMin: Math.round(durationMin - remaining) };
+}
+
+function computeIsOpenNow(opening_hours_str) {
+    if (!opening_hours_str) return null;
+    const str = opening_hours_str.trim();
+    if (str === '24/7') return true;
+    try {
+        const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+        const now = new Date();
+        const todayIdx = now.getDay(); // 0=Sun
+        const todayCode = DAYS[todayIdx];
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+        // Parse patterns like "Mo-Fr 09:00-18:00" or "Mo-Su 08:00-20:00; Tu off"
+        const segments = str.split(';').map(s => s.trim()).filter(Boolean);
+        for (const segment of segments) {
+            const match = segment.match(/^([A-Za-z,\-]+)\s+(\d{2}:\d{2})-(\d{2}:\d{2})$/);
+            if (!match) continue;
+            const daysPart = match[1];
+            const startTime = match[2].split(':').map(Number);
+            const endTime = match[3].split(':').map(Number);
+            const startMin = startTime[0] * 60 + startTime[1];
+            const endMin = endTime[0] * 60 + endTime[1];
+
+            // Check if today is in the day range
+            let todayMatch = false;
+            const dayRanges = daysPart.split(',');
+            for (const range of dayRanges) {
+                if (range.includes('-')) {
+                    const [from, to] = range.split('-');
+                    const fromIdx = DAYS.indexOf(from.trim());
+                    const toIdx = DAYS.indexOf(to.trim());
+                    if (fromIdx === -1 || toIdx === -1) continue;
+                    if (fromIdx <= toIdx) {
+                        if (todayIdx >= fromIdx && todayIdx <= toIdx) todayMatch = true;
+                    } else {
+                        // Wrap-around (e.g. Fr-Su)
+                        if (todayIdx >= fromIdx || todayIdx <= toIdx) todayMatch = true;
+                    }
+                } else {
+                    if (range.trim() === todayCode) todayMatch = true;
+                }
+            }
+            if (todayMatch) {
+                return currentMinutes >= startMin && currentMinutes < endMin;
+            }
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchWikipediaInfo(name) {
+    const cacheKey = `wiki_${name}`;
+    const cached = placeDetailsCache.get(cacheKey);
+    if (cached && Date.now() - cached.time < CACHE_DURATION) return cached.info;
+    const encoded = encodeURIComponent(name);
+    for (const lang of ['fr', 'en']) {
+        try {
+            const resp = await axios.get(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encoded}`, {
+                timeout: 2000,
+                headers: { 'User-Agent': 'TravelingApp/1.0 (contact@traveling.app)' }
+            });
+            const imageUrl = resp.data?.thumbnail?.source || null;
+            const summary = resp.data?.extract || null;
+            if (imageUrl || summary) {
+                const info = { imageUrl, summary };
+                placeDetailsCache.set(cacheKey, { info, time: Date.now() });
+                return info;
+            }
+        } catch {}
+    }
+    const info = { imageUrl: null, summary: null };
+    placeDetailsCache.set(cacheKey, { info, time: Date.now() });
+    return info;
 }
 
 // WMO weather code → libellé français
@@ -1162,13 +1312,47 @@ async function getWeatherForecast(lat, lon) {
     }
 }
 
+// Parse un tag OSM de type "charge" ou "entrance_fee" → nombre en euros ou null
+function parseChargeStr(str) {
+    if (!str) return null;
+    const lower = str.toLowerCase().trim();
+    if (lower === 'free' || lower === 'no' || lower === '0') return 0;
+    if (lower === 'yes') return null; // payant mais montant inconnu
+    const match = str.match(/(\d+(?:[.,]\d+)?)/);
+    if (match) return Math.round(parseFloat(match[1].replace(',', '.')));
+    return null;
+}
+
+// Parse price_range / price_level ("$" → 5, "$$" → 12, "$$$" → 25, "$$$$" → 40, ou 1-4)
+function parsePriceRangeStr(str) {
+    if (!str) return null;
+    const t = str.trim();
+    if (t === '$' || t === '1') return 5;
+    if (t === '$$' || t === '2') return 12;
+    if (t === '$$$' || t === '3') return 25;
+    if (t === '$$$$' || t === '4') return 40;
+    return null;
+}
+
+// Retourne { cost: number, isReal: boolean } en cherchant les vrais tags OSM en priorité
+function resolveOsmCost(tags, fallbackEstimate) {
+    let cost = parseChargeStr(tags['charge']);
+    if (cost !== null) return { cost, isReal: true };
+    cost = parseChargeStr(tags['entrance_fee']);
+    if (cost !== null) return { cost, isReal: true };
+    cost = parsePriceRangeStr(tags['price_range'] || tags['price_level']);
+    if (cost !== null) return { cost, isReal: true };
+    if (tags['fee'] === 'no') return { cost: 0, isReal: true };
+    return { cost: fallbackEstimate, isReal: false };
+}
+
 /**
  * [POST] /api/itineraries/generate
- * Body: { locations:[{lat,lon,name}], durationMinutes, mode, activities:[String], wantsGoodWeather?:Boolean }
+ * Body: { locations, durationMinutes, mode, activities, wantsGoodWeather?, budget?, effortLevel?, weatherSensitivity?, timeSlot? }
  */
 app.post('/api/itineraries/generate', async (req, res) => {
     try {
-        const { locations, durationMinutes, mode, activities, wantsGoodWeather } = req.body;
+        const { locations, durationMinutes, mode, activities, wantsGoodWeather, budget, effortLevel, weatherSensitivity, timeSlot } = req.body;
         if (!locations || locations.length === 0) {
             return res.status(400).json({ error: "Au moins un lieu requis" });
         }
@@ -1190,6 +1374,11 @@ app.post('/api/itineraries/generate', async (req, res) => {
             activityFilters.push(`node["leisure"~"park|garden|playground"](around:${radius},${startLat},${startLon});`);
             activityFilters.push(`node["amenity"~"cinema|theatre|library"](around:${radius},${startLat},${startLon});`);
         }
+        if (!activities || activities.length === 0 || activities.includes('Découverte')) {
+            activityFilters.push(`node["leisure"~"nature_reserve|beach_resort"](around:${radius},${startLat},${startLon});`);
+            activityFilters.push(`node["tourism"~"viewpoint|picnic_site"](around:${radius},${startLat},${startLon});`);
+            activityFilters.push(`node["natural"~"peak|waterfall|spring"](around:${radius},${startLat},${startLon});`);
+        }
 
         if (activityFilters.length === 0) {
             return res.status(400).json({ error: "Aucune catégorie sélectionnée" });
@@ -1207,18 +1396,49 @@ app.post('/api/itineraries/generate', async (req, res) => {
 
         const pois = (osmRes.data.elements || [])
             .filter(el => el.tags?.name && el.lat && el.lon)
-            .map(el => ({
-                name: el.tags.name,
-                type: el.tags.amenity || el.tags.tourism || el.tags.leisure || 'lieu',
-                lat: el.lat,
-                lon: el.lon,
-                category: el.tags.amenity && (el.tags.amenity.includes('restaurant') || el.tags.amenity.includes('cafe') || el.tags.amenity.includes('bar') || el.tags.amenity.includes('food'))
-                    ? 'Restauration'
-                    : el.tags.tourism ? 'Culture' : 'Loisirs'
-            }));
+            .map(el => {
+                const amenity = el.tags.amenity || '';
+                const tourism = el.tags.tourism || '';
+                const leisure = el.tags.leisure || '';
+                const natural = el.tags.natural || '';
+                const isRestaurant = amenity && ['restaurant','cafe','bar','bakery','fast_food'].some(t => amenity.includes(t));
+                const isCulture = tourism && ['museum','gallery','attraction','monument'].includes(tourism);
+                const isDecouverte = (['nature_reserve','beach_resort'].includes(leisure))
+                    || (['viewpoint','picnic_site'].includes(tourism))
+                    || !!natural;
+                const isIndoor = ['restaurant','cafe','bar','bakery','fast_food','cinema','theatre','library'].some(t => amenity.includes(t))
+                    || ['museum','gallery'].includes(tourism);
+                const fallback = amenity.includes('restaurant') ? 15
+                    : amenity.includes('fast_food') ? 10
+                    : amenity.includes('bar') ? 8
+                    : (amenity.includes('cafe') || amenity.includes('bakery')) ? 5
+                    : amenity === 'cinema' ? 12
+                    : amenity === 'theatre' ? 20
+                    : tourism === 'museum' ? 10
+                    : tourism === 'gallery' ? 8
+                    : tourism === 'attraction' ? 8
+                    : 0;
+                const { cost: avgCost, isReal: costIsReal } = resolveOsmCost(el.tags, fallback);
+                return {
+                    name: el.tags.name,
+                    type: amenity || tourism || leisure || natural || 'lieu',
+                    lat: el.lat,
+                    lon: el.lon,
+                    openingHours: el.tags['opening_hours'] || null,
+                    isIndoor,
+                    avgCost,
+                    costIsReal,
+                    category: isRestaurant ? 'Restauration' : isCulture ? 'Culture' : isDecouverte ? 'Découverte' : 'Loisirs'
+                };
+            });
 
         if (pois.length === 0) {
             return res.status(404).json({ error: "Aucun lieu trouvé dans cette zone. Essayez un rayon plus large ou d'autres activités." });
+        }
+
+        // Prioritize indoor POIs if weather-sensitive
+        if (weatherSensitivity && weatherSensitivity.length > 0) {
+            pois.sort((a, b) => (b.isIndoor ? 1 : 0) - (a.isIndoor ? 1 : 0));
         }
 
         // Récupérer les altitudes pour tous les POIs
@@ -1226,16 +1446,19 @@ app.post('/api/itineraries/generate', async (req, res) => {
         const elevations = await getElevations(poisCoords);
         pois.forEach((p, i) => { p.elev = elevations[i] || 0; });
 
-        // Variante 1 – Découverte : tous les POIs, greedy nearest-neighbor
-        const v1 = buildRoute(pois, startLat, startLon, 0, duration, speed);
+        // Effort level → max step distance
+        const maxStepDist = effortLevel === 'minimal' ? 300 : effortLevel === 'reduced' ? 600 : Infinity;
+
+        // Variante 1 – Mix : tous les POIs, greedy nearest-neighbor
+        const v1 = buildRoute(pois, startLat, startLon, 0, duration, speed, maxStepDist);
 
         // Variante 2 – Thématique : catégorie principale en priorité
-        const primaryCategory = (activities && activities.length > 0) ? activities[0] : 'Restauration';
+        const primaryCategory = (activities && activities.length > 0) ? activities[0] : 'Culture';
         const primaryPois = pois.filter(p => p.category === primaryCategory);
         const secondaryPois = pois.filter(p => p.category !== primaryCategory);
         const v2 = buildRoute(
             primaryPois.length > 0 ? [...primaryPois, ...secondaryPois] : pois,
-            startLat, startLon, 0, duration, speed
+            startLat, startLon, 0, duration, speed, maxStepDist
         );
 
         // Variante 3 – Panoramique : max 2 POIs par catégorie (variété forcée)
@@ -1245,27 +1468,60 @@ app.post('/api/itineraries/generate', async (req, res) => {
             byCategory[p.category].push(p);
         }
         const diversePool = Object.values(byCategory).flatMap(arr => arr.slice(0, 2));
-        const v3 = buildRoute(diversePool, startLat, startLon, 0, duration, speed);
-
-        const toVariant = (name, description, route) => ({
-            name,
-            description,
-            estimatedDuration: route.usedMin,
-            estimatedDistance: route.totalDist,
-            steps: route.steps
-        });
+        const v3 = buildRoute(diversePool, startLat, startLon, 0, duration, speed, maxStepDist);
 
         const variants = [
-            toVariant("Découverte", "Un mix équilibré de lieux à visiter autour de vous", v1),
-            toVariant("Thématique", `Centré sur ${primaryCategory.toLowerCase()} avec quelques extras`, v2),
-            toVariant("Panoramique", "Un tour varié avec un lieu par catégorie", v3)
-        ].filter(v => v.steps.length > 0);
+            { name: "Mix équilibré", description: "Un parcours qui combine tous les types de lieux autour de vous", route: v1 },
+            { name: "Thématique", description: `Centré sur ${primaryCategory.toLowerCase()} avec quelques extras`, route: v2 },
+            { name: "Panoramique", description: "Un tour varié avec un lieu par catégorie", route: v3 }
+        ]
+        .filter(v => v.route.steps.length > 0)
+        .map(v => ({
+            name: v.name,
+            description: v.description,
+            estimatedDuration: v.route.usedMin,
+            estimatedDistance: v.route.totalDist,
+            steps: v.route.steps
+        }));
 
         if (variants.length === 0) {
             return res.status(404).json({ error: "Pas assez de temps ou de lieux pour créer un itinéraire" });
         }
 
-        console.log(`✅ ${variants.length} variante(s) générée(s) à partir de ${pois.length} lieux`);
+        // Fetch Wikipedia thumbnails in parallel (capped at 4s total)
+        const uniqueStepNames = [...new Set(variants.flatMap(v => v.steps.map(s => s.name)))];
+        const wikiDeadline = new Promise(resolve => setTimeout(() => resolve(null), 4000));
+        const wikiRace = Promise.allSettled(uniqueStepNames.map(n => fetchWikipediaInfo(n).then(info => info?.imageUrl)));
+        const wikiResult = await Promise.race([wikiRace, wikiDeadline]);
+        const photoMap = {};
+        if (Array.isArray(wikiResult)) {
+            uniqueStepNames.forEach((name, i) => {
+                photoMap[name] = wikiResult[i]?.status === 'fulfilled' ? wikiResult[i].value : null;
+            });
+        }
+
+        // Enrich variants with photos and compute metrics
+        const budgetMax = parseInt(budget) || 0;
+        variants.forEach(v => {
+            v.steps.forEach(s => { s.photoUrl = photoMap[s.name] || null; });
+            v.estimatedBudget = v.steps.reduce((sum, s) => sum + (s.avgCost || 0), 0);
+            const distKm = v.estimatedDistance / 1000;
+            v.effortScore = distKm < 0.5 ? 1 : distKm < 1.5 ? 2 : distKm < 3 ? 3 : distKm < 5 ? 4 : 5;
+            if (mode === 'jogging') v.effortScore = Math.min(5, v.effortScore + 1);
+            if (effortLevel === 'minimal') v.effortScore = Math.min(v.effortScore, 2);
+            const restaurantSteps = v.steps.filter(s => ['restaurant','bar','fast_food','cafe','bakery'].includes(s.type)).length;
+            v.suggestedSlot = timeSlot && timeSlot !== 'all' ? timeSlot
+                : restaurantSteps > v.steps.length / 2 ? 'soir'
+                : v.effortScore <= 2 ? 'matin' : 'après-midi';
+        });
+
+        // Filter variants exceeding budget (only if budget specified)
+        const filteredVariants = budgetMax > 0
+            ? variants.filter(v => v.estimatedBudget <= budgetMax)
+            : variants;
+        const finalVariants = filteredVariants.length > 0 ? filteredVariants : variants;
+
+        console.log(`✅ ${finalVariants.length} variante(s) générée(s) à partir de ${pois.length} lieux`);
 
         let goodWeatherDays = null;
         if (wantsGoodWeather) {
@@ -1273,7 +1529,7 @@ app.post('/api/itineraries/generate', async (req, res) => {
             console.log(`☀️  Météo récupérée : ${goodWeatherDays?.length ?? 0} jours`);
         }
 
-        res.json({ variants, goodWeatherDays });
+        res.json({ variants: finalVariants, goodWeatherDays });
 
     } catch (error) {
         if (error.response) {
@@ -1635,6 +1891,376 @@ app.get('/api/itineraries/:id/pdf', async (req, res) => {
         if (!res.headersSent) res.status(500).json({ error: "Erreur génération PDF" });
     }
 });
+
+// ── User Search ────────────────────────────────────────────────────────────────
+app.get('/api/users/search', async (req, res) => {
+    const { query } = req.query;
+    if (!query || query.trim().length < 1) return res.json([]);
+    try {
+        const users = await prisma.user.findMany({
+            where: {
+                OR: [
+                    { username: { contains: query, mode: 'insensitive' } },
+                    { pseudo: { contains: query, mode: 'insensitive' } }
+                ]
+            },
+            select: {
+                id: true,
+                username: true,
+                pseudo: true,
+                profileUrl: true,
+                _count: { select: { followers: true } }
+            },
+            take: 10
+        });
+        res.json(users.map(u => ({
+            id: u.id,
+            username: u.username,
+            pseudo: u.pseudo,
+            profileUrl: u.profileUrl ? `${BASE_URL}${u.profileUrl}` : null,
+            followersCount: u._count.followers
+        })));
+    } catch (error) {
+        console.error("💥 Erreur recherche utilisateurs:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// ── Public User Profile ─────────────────────────────────────────────────────
+app.get('/api/users/:userId/profile', async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    const followerId = req.query.followerId ? parseInt(req.query.followerId) : null;
+    if (isNaN(userId)) return res.status(400).json({ error: "userId invalide" });
+    try {
+        const followRecord = (followerId && followerId !== userId)
+            ? await prisma.follow.findUnique({ where: { followerId_followingId: { followerId, followingId: userId } } })
+            : null;
+
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                username: true,
+                pseudo: true,
+                profileUrl: true,
+                _count: { select: { followers: true, following: true } },
+                photos: {
+                    where: { is_public: true },
+                    orderBy: { date: 'desc' },
+                    include: {
+                        tags: true,
+                        _count: { select: { likedBy: true, comments: true } },
+                        itinerary: { include: { steps: { orderBy: { order: 'asc' } } } }
+                    }
+                }
+            }
+        });
+        if (!user) return res.status(404).json({ error: "Utilisateur introuvable" });
+
+        const posts = user.photos.map(p => ({
+            id: p.id.toString(),
+            title: p.type_lieu,
+            content: p.description,
+            imageUrl: p.url ? `${BASE_URL}${p.url}` : null,
+            tags: p.tags.map(t => t.name),
+            likes: p.likesCount,
+            commentsCount: p._count.comments,
+            isPublic: p.is_public,
+            authorId: userId.toString(),
+            authorName: user.pseudo || user.username,
+            authorAvatar: user.profileUrl ? `${BASE_URL}${user.profileUrl}` : null,
+            itineraryId: p.itineraryId,
+            sharedItinerary: p.itinerary ? {
+                id: p.itinerary.id,
+                name: p.itinerary.name,
+                duration: p.itinerary.duration,
+                distance: p.itinerary.distance,
+                mode: p.itinerary.mode,
+                steps: p.itinerary.steps
+            } : null
+        }));
+
+        res.json({
+            id: user.id,
+            username: user.username,
+            pseudo: user.pseudo,
+            profileUrl: user.profileUrl ? `${BASE_URL}${user.profileUrl}` : null,
+            followersCount: user._count.followers,
+            followingCount: user._count.following,
+            isFollowing: !!followRecord,
+            notifyEnabled: followRecord?.notify ?? false,
+            posts
+        });
+    } catch (error) {
+        console.error("💥 Erreur profil utilisateur:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// ── Follow / Unfollow ────────────────────────────────────────────────────────
+app.post('/api/users/:userId/follow', async (req, res) => {
+    const followingId = parseInt(req.params.userId);
+    const followerId = parseInt(req.body.followerId);
+    if (isNaN(followingId) || isNaN(followerId)) return res.status(400).json({ error: "Ids invalides" });
+    if (followerId === followingId) return res.status(400).json({ error: "Impossible de se suivre soi-meme" });
+    try {
+        await prisma.follow.upsert({
+            where: { followerId_followingId: { followerId, followingId } },
+            create: { followerId, followingId },
+            update: {}
+        });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Erreur follow:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+app.delete('/api/users/:userId/follow', async (req, res) => {
+    const followingId = parseInt(req.params.userId);
+    const followerId = parseInt(req.body.followerId);
+    if (isNaN(followingId) || isNaN(followerId)) return res.status(400).json({ error: "Ids invalides" });
+    try {
+        await prisma.follow.deleteMany({ where: { followerId, followingId } });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Erreur unfollow:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+app.put('/api/users/:userId/follow/notify', async (req, res) => {
+    const followingId = parseInt(req.params.userId);
+    const followerId = parseInt(req.body.followerId);
+    const notify = req.body.notify === true || req.body.notify === 'true';
+    if (isNaN(followingId) || isNaN(followerId)) return res.status(400).json({ error: "Ids invalides" });
+    try {
+        await prisma.follow.update({
+            where: { followerId_followingId: { followerId, followingId } },
+            data: { notify }
+        });
+        res.json({ success: true, notify });
+    } catch (error) {
+        console.error("Erreur toggle notify:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// ── Notifications ────────────────────────────────────────────────────────────
+app.get('/api/users/:userId/notifications', async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) return res.status(400).json({ error: "userId invalide" });
+    try {
+        const notifications = await prisma.notification.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+            include: {
+                from: { select: { id: true, username: true, pseudo: true, profileUrl: true } }
+            }
+        });
+        // Charger les groupIds pour les notifs event_soon
+        const eventIds = notifications.filter(n => n.type === 'event_soon' && n.eventId).map(n => n.eventId);
+        const events = eventIds.length > 0
+            ? await prisma.event.findMany({ where: { id: { in: eventIds } }, select: { id: true, groupId: true, title: true } })
+            : [];
+        const eventMap = Object.fromEntries(events.map(e => [e.id, e]));
+
+        res.json(notifications.map(n => ({
+            id: n.id,
+            type: n.type,
+            photoId: n.photoId,
+            eventId: n.eventId,
+            groupId: n.eventId ? eventMap[n.eventId]?.groupId ?? null : null,
+            eventTitle: n.eventId ? eventMap[n.eventId]?.title ?? null : null,
+            read: n.read,
+            createdAt: n.createdAt,
+            fromId: n.fromId,
+            fromUsername: n.from.username,
+            fromPseudo: n.from.pseudo,
+            fromProfileUrl: n.from.profileUrl ? `${BASE_URL}${n.from.profileUrl}` : null
+        })));
+    } catch (error) {
+        console.error("Erreur notifications:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+app.put('/api/notifications/read-all', async (req, res) => {
+    const userId = parseInt(req.body.userId);
+    if (isNaN(userId)) return res.status(400).json({ error: "userId invalide" });
+    try {
+        await prisma.notification.updateMany({ where: { userId, read: false }, data: { read: true } });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// ── Events ───────────────────────────────────────────────────────────────────
+app.get('/api/groups/:groupId/events', async (req, res) => {
+    const groupId = parseInt(req.params.groupId);
+    const userId = req.query.userId ? parseInt(req.query.userId) : null;
+    if (isNaN(groupId)) return res.status(400).json({ error: "groupId invalide" });
+    try {
+        const events = await prisma.event.findMany({
+            where: { groupId },
+            orderBy: { startAt: 'asc' },
+            include: {
+                createdBy: { select: { id: true, username: true, pseudo: true } },
+                itinerary: { include: { steps: { orderBy: { order: 'asc' } } } },
+                interested: userId
+                    ? { include: { user: { select: { id: true, username: true, pseudo: true, profileUrl: true } } } }
+                    : { select: { userId: true } }
+            }
+        });
+        res.json(events.map(e => ({
+            id: e.id,
+            title: e.title,
+            description: e.description,
+            startAt: e.startAt,
+            groupId: e.groupId,
+            itineraryId: e.itineraryId,
+            itineraryName: e.itinerary?.name ?? null,
+            itinerary: e.itinerary ? {
+                id: e.itinerary.id,
+                name: e.itinerary.name,
+                duration: e.itinerary.duration,
+                distance: e.itinerary.distance,
+                mode: e.itinerary.mode,
+                steps: e.itinerary.steps.map(s => ({ id: s.id, order: s.order, name: s.name, type: s.type, latitude: s.latitude, longitude: s.longitude }))
+            } : null,
+            createdById: e.createdById,
+            createdByName: e.createdBy.pseudo || e.createdBy.username,
+            interestedCount: e.interested.length,
+            isInterested: userId ? e.interested.some(i => i.userId === userId) : false,
+            interestedUsers: userId ? e.interested.map(i => ({
+                id: i.user.id,
+                username: i.user.username,
+                pseudo: i.user.pseudo,
+                profileUrl: i.user.profileUrl ? `${BASE_URL}${i.user.profileUrl}` : null
+            })) : []
+        })));
+    } catch (error) {
+        console.error("Erreur events:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+app.post('/api/groups/:groupId/events', async (req, res) => {
+    const groupId = parseInt(req.params.groupId);
+    const { title, description, startAt, itineraryId, createdById } = req.body;
+    if (isNaN(groupId) || !startAt || !createdById) return res.status(400).json({ error: "Champs manquants" });
+
+    try {
+        // Vérifier que l'utilisateur est admin
+        const membership = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: parseInt(createdById), groupId } }
+        });
+        if (!membership || membership.role !== 'ADMIN') {
+            return res.status(403).json({ error: "Seul l'admin peut créer un événement" });
+        }
+
+        const event = await prisma.event.create({
+            data: {
+                title: title || null,
+                description: description || null,
+                startAt: new Date(startAt),
+                groupId,
+                itineraryId: itineraryId ? parseInt(itineraryId) : null,
+                createdById: parseInt(createdById)
+            },
+            include: {
+                itinerary: { include: { steps: { orderBy: { order: 'asc' } } } },
+                createdBy: { select: { id: true, username: true, pseudo: true } }
+            }
+        });
+
+        res.status(201).json({
+            id: event.id,
+            title: event.title,
+            description: event.description,
+            startAt: event.startAt,
+            groupId: event.groupId,
+            itineraryId: event.itineraryId,
+            itineraryName: event.itinerary?.name ?? null,
+            itinerary: event.itinerary ? {
+                id: event.itinerary.id,
+                name: event.itinerary.name,
+                duration: event.itinerary.duration,
+                distance: event.itinerary.distance,
+                mode: event.itinerary.mode,
+                steps: event.itinerary.steps.map(s => ({ id: s.id, order: s.order, name: s.name, type: s.type, latitude: s.latitude, longitude: s.longitude }))
+            } : null,
+            createdById: event.createdById,
+            createdByName: event.createdBy.pseudo || event.createdBy.username,
+            interestedCount: 0,
+            isInterested: false,
+            interestedUsers: []
+        });
+    } catch (error) {
+        console.error("Erreur création event:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+app.post('/api/events/:eventId/interest', async (req, res) => {
+    const eventId = parseInt(req.params.eventId);
+    const userId = parseInt(req.body.userId);
+    if (isNaN(eventId) || isNaN(userId)) return res.status(400).json({ error: "Ids invalides" });
+    try {
+        await prisma.eventInterest.upsert({
+            where: { eventId_userId: { eventId, userId } },
+            create: { eventId, userId },
+            update: {}
+        });
+        const count = await prisma.eventInterest.count({ where: { eventId } });
+        res.json({ success: true, interestedCount: count });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+app.delete('/api/events/:eventId/interest', async (req, res) => {
+    const eventId = parseInt(req.params.eventId);
+    const userId = parseInt(req.body.userId);
+    if (isNaN(eventId) || isNaN(userId)) return res.status(400).json({ error: "Ids invalides" });
+    try {
+        await prisma.eventInterest.deleteMany({ where: { eventId, userId } });
+        const count = await prisma.eventInterest.count({ where: { eventId } });
+        res.json({ success: true, interestedCount: count });
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+// ── Job : notifier 1h avant chaque événement ─────────────────────────────────
+setInterval(async () => {
+    try {
+        const now = new Date();
+        const windowStart = new Date(now.getTime() + 55 * 60 * 1000);
+        const windowEnd   = new Date(now.getTime() + 65 * 60 * 1000);
+        const events = await prisma.event.findMany({
+            where: { startAt: { gte: windowStart, lte: windowEnd }, notified: false },
+            include: { interested: true }
+        });
+        for (const event of events) {
+            if (event.interested.length > 0) {
+                await prisma.notification.createMany({
+                    data: event.interested.map(i => ({
+                        userId: i.userId,
+                        fromId: event.createdById,
+                        type: 'event_soon',
+                        eventId: event.id
+                    }))
+                });
+            }
+            await prisma.event.update({ where: { id: event.id }, data: { notified: true } });
+        }
+    } catch (e) {
+        console.error("Erreur job events:", e);
+    }
+}, 60 * 1000);
 
 // Lancement
 app.listen(PORT, '0.0.0.0', () => {

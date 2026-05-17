@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.traveling.data.remote.PhotonApi
 import com.traveling.data.remote.PhotonFeature
 import com.traveling.domain.model.Place
+import com.traveling.domain.model.RouteInstruction
 import com.traveling.domain.model.RoutePoint
 import com.traveling.domain.repository.PlaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,7 +28,13 @@ data class MapUiState(
     val userLocation: RoutePoint? = null,
     val pendingCenter: Pair<Double, Double>? = null,
     val pendingPlaceId: String? = null,
-    val isSearchingDetails: Boolean = false
+    val isSearchingDetails: Boolean = false,
+    val routeDistance: Int = 0,
+    val routeDuration: Int = 0,
+    val routeMode: String = "",
+    val routeInstructions: List<RouteInstruction> = emptyList(),
+    val currentInstructionIndex: Int = 0,
+    val isNavigating: Boolean = false
 )
 
 @HiltViewModel
@@ -88,7 +95,12 @@ class MapViewModel @Inject constructor(
                 .onSuccess { route ->
                     _uiState.value = _uiState.value.copy(
                         currentRoute = route.points,
-                        isCalculatingRoute = false
+                        isCalculatingRoute = false,
+                        routeDistance = route.distance,
+                        routeDuration = route.duration,
+                        routeInstructions = route.instructions,
+                        routeMode = mode,
+                        currentInstructionIndex = 0
                     )
                 }
                 .onFailure { error ->
@@ -101,7 +113,33 @@ class MapViewModel @Inject constructor(
     }
 
     fun clearRoute() {
-        _uiState.value = _uiState.value.copy(currentRoute = null)
+        _uiState.value = _uiState.value.copy(
+            currentRoute = null,
+            routeDistance = 0,
+            routeDuration = 0,
+            routeInstructions = emptyList(),
+            isNavigating = false,
+            currentInstructionIndex = 0
+        )
+    }
+
+    fun startNavigation() {
+        _uiState.value = _uiState.value.copy(isNavigating = true)
+    }
+
+    fun stopNavigation() {
+        _uiState.value = _uiState.value.copy(isNavigating = false, currentInstructionIndex = 0)
+    }
+
+    fun nextInstruction() {
+        val idx = _uiState.value.currentInstructionIndex
+        val max = _uiState.value.routeInstructions.size - 1
+        if (idx < max) _uiState.value = _uiState.value.copy(currentInstructionIndex = idx + 1)
+    }
+
+    fun prevInstruction() {
+        val idx = _uiState.value.currentInstructionIndex
+        if (idx > 0) _uiState.value = _uiState.value.copy(currentInstructionIndex = idx - 1)
     }
 
     fun setPendingCenter(lat: Double, lon: Double) {

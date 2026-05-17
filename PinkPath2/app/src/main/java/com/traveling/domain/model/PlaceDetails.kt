@@ -16,7 +16,13 @@ data class PlaceDetails(
     val stars: Int?,
     val wheelchair: String?,
     val internet_access: String?,
-    val photos: List<PlacePhoto> = emptyList()
+    val photos: List<PlacePhoto> = emptyList(),
+    val wikiSummary: String? = null,
+    val wikiImage: String? = null,
+    val isOpenNow: Boolean? = null,
+    val fee: String? = null,
+    val operator: String? = null,
+    val brand: String? = null
 )
 
 data class Address(

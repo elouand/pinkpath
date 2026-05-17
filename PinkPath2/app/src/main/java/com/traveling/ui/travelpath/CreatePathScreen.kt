@@ -4,8 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -17,13 +19,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
 import com.traveling.domain.model.ItineraryStep
 import com.traveling.domain.model.ItineraryVariant
 import com.traveling.domain.model.LocationPoint
@@ -47,11 +52,15 @@ fun CreatePathScreen(
     var selectedMode by remember { mutableStateOf("walking") }
     var selectedActivities by remember { mutableStateOf(setOf("Restauration", "Culture", "Loisirs")) }
     var wantsGoodWeather by remember { mutableStateOf(false) }
+    var budget by remember { mutableStateOf(0f) }
+    var effortLevel by remember { mutableStateOf("normal") }
+    var weatherSensitivity by remember { mutableStateOf(setOf<String>()) }
+    var timeSlot by remember { mutableStateOf("all") }
+
     var showSaveDialog by remember { mutableStateOf(false) }
     var variantToSave by remember { mutableStateOf<ItineraryVariant?>(null) }
     var saveNameInput by remember { mutableStateOf("") }
 
-    // Navigate back after successful save
     LaunchedEffect(uiState.saveSuccess) {
         if (uiState.saveSuccess) {
             viewModel.clearSaveSuccess()
@@ -119,7 +128,6 @@ fun CreatePathScreen(
                 )
             }
 
-            // Suggestions
             if (uiState.searchResults.isNotEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -151,7 +159,6 @@ fun CreatePathScreen(
                 }
             }
 
-            // Lieux sélectionnés
             if (locations.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
@@ -222,7 +229,7 @@ fun CreatePathScreen(
             // ── Activités ─────────────────────────────────────────────
             Text("Activités", fontWeight = FontWeight.Bold, color = TravelingDeepPurple, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ActivityToggle(
                     name = "Restauration",
                     icon = Icons.Default.Restaurant,
@@ -244,6 +251,72 @@ fun CreatePathScreen(
                     modifier = Modifier.weight(1f),
                     onClick = { selectedActivities = selectedActivities.toggle("Loisirs") }
                 )
+                ActivityToggle(
+                    name = "Découverte",
+                    icon = Icons.Default.Park,
+                    isSelected = selectedActivities.contains("Découverte"),
+                    modifier = Modifier.weight(1f),
+                    onClick = { selectedActivities = selectedActivities.toggle("Découverte") }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ── Budget max ────────────────────────────────────────────
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Euro, null, tint = TravelingDeepPurple, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Budget max", fontWeight = FontWeight.Bold, color = TravelingDeepPurple)
+                }
+                Text(
+                    if (budget == 0f) "Illimité" else "${budget.roundToInt()} €",
+                    fontWeight = FontWeight.Bold,
+                    color = if (budget == 0f) Color.Gray else TravelingDeepPurple
+                )
+            }
+            Slider(
+                value = budget,
+                onValueChange = { budget = it },
+                valueRange = 0f..200f,
+                steps = 19,
+                colors = SliderDefaults.colors(thumbColor = TravelingDeepPurple, activeTrackColor = TravelingDeepPurple),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Illimité", fontSize = 12.sp, color = Color.Gray)
+                Text("200 €", fontSize = 12.sp, color = Color.Gray)
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ── Niveau d'effort ───────────────────────────────────────
+            Text("Niveau d'effort", fontWeight = FontWeight.Bold, color = TravelingDeepPurple, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Adapte les distances entre les étapes", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EffortChip(
+                    label = "Normal",
+                    emoji = "🚶",
+                    isSelected = effortLevel == "normal",
+                    onClick = { effortLevel = "normal" },
+                    modifier = Modifier.weight(1f)
+                )
+                EffortChip(
+                    label = "Réduit",
+                    emoji = "🧓",
+                    isSelected = effortLevel == "reduced",
+                    onClick = { effortLevel = "reduced" },
+                    modifier = Modifier.weight(1f)
+                )
+                EffortChip(
+                    label = "Minimal",
+                    emoji = "♿",
+                    isSelected = effortLevel == "minimal",
+                    onClick = { effortLevel = "minimal" },
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -264,10 +337,7 @@ fun CreatePathScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (wantsGoodWeather) "☀️" else "🌤️",
-                        fontSize = 28.sp
-                    )
+                    Text(text = if (wantsGoodWeather) "☀️" else "🌤️", fontSize = 28.sp)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -293,6 +363,73 @@ fun CreatePathScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Sensibilité météo ─────────────────────────────────────
+            Text("Sensibilité météo", fontWeight = FontWeight.Bold, color = TravelingDeepPurple, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Privilégie les lieux couverts selon vos contraintes", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SensitivityChip(
+                    label = "Chaleur",
+                    emoji = "🌡️",
+                    isSelected = weatherSensitivity.contains("chaleur"),
+                    onClick = { weatherSensitivity = weatherSensitivity.toggle("chaleur") },
+                    modifier = Modifier.weight(1f)
+                )
+                SensitivityChip(
+                    label = "Froid",
+                    emoji = "🥶",
+                    isSelected = weatherSensitivity.contains("froid"),
+                    onClick = { weatherSensitivity = weatherSensitivity.toggle("froid") },
+                    modifier = Modifier.weight(1f)
+                )
+                SensitivityChip(
+                    label = "Humidité",
+                    emoji = "💧",
+                    isSelected = weatherSensitivity.contains("humidite"),
+                    onClick = { weatherSensitivity = weatherSensitivity.toggle("humidite") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ── Créneau horaire ───────────────────────────────────────
+            Text("Créneau horaire", fontWeight = FontWeight.Bold, color = TravelingDeepPurple, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TimeSlotChip(
+                    label = "Tout",
+                    emoji = "🕐",
+                    isSelected = timeSlot == "all",
+                    onClick = { timeSlot = "all" },
+                    modifier = Modifier.weight(1f)
+                )
+                TimeSlotChip(
+                    label = "Matin",
+                    emoji = "🌅",
+                    isSelected = timeSlot == "matin",
+                    onClick = { timeSlot = "matin" },
+                    modifier = Modifier.weight(1f)
+                )
+                TimeSlotChip(
+                    label = "Aprés-midi",
+                    emoji = "☀️",
+                    isSelected = timeSlot == "après-midi",
+                    onClick = { timeSlot = "après-midi" },
+                    modifier = Modifier.weight(1f)
+                )
+                TimeSlotChip(
+                    label = "Soir",
+                    emoji = "🌆",
+                    isSelected = timeSlot == "soir",
+                    onClick = { timeSlot = "soir" },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // ── Erreur ────────────────────────────────────────────────
@@ -304,15 +441,17 @@ fun CreatePathScreen(
             Button(
                 onClick = {
                     viewModel.clearError()
-                    if (locations.isEmpty()) {
-                        return@Button
-                    }
+                    if (locations.isEmpty()) return@Button
                     viewModel.generateItineraries(
                         locations = locations,
                         durationMinutes = durationMinutes.roundToInt(),
                         mode = selectedMode,
                         activities = selectedActivities.toList(),
-                        wantsGoodWeather = wantsGoodWeather
+                        wantsGoodWeather = wantsGoodWeather,
+                        budget = budget.roundToInt(),
+                        effortLevel = effortLevel,
+                        weatherSensitivity = weatherSensitivity.toList(),
+                        timeSlot = timeSlot
                     )
                 },
                 enabled = locations.isNotEmpty() && !uiState.isGenerating,
@@ -342,15 +481,25 @@ fun CreatePathScreen(
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Choisissez votre itinéraire",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = TravelingDeepPurple,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Choisissez votre itinéraire",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = TravelingDeepPurple
+                        )
+                        TextButton(onClick = { viewModel.clearVariants() }) {
+                            Icon(Icons.Default.Tune, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Ajuster", color = TravelingDeepPurple)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
 
-                    // Panneau météo (si beau temps demandé)
                     uiState.goodWeatherDays?.let { days ->
                         WeatherDaysPanel(days = days)
                         Spacer(modifier = Modifier.height(16.dp))
@@ -414,36 +563,92 @@ private fun VariantCard(
     isSaving: Boolean,
     onChoose: () -> Unit
 ) {
+    var expandedSteps by remember { mutableStateOf(false) }
+
     Card(
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(4.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Header: name + duration/distance chips
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(variant.name, style = MaterialTheme.typography.titleLarge, color = TravelingDeepPurple, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     InfoChip(Icons.Default.Schedule, "${variant.estimatedDuration} min")
                     InfoChip(Icons.Default.Straighten, "${(variant.estimatedDistance / 1000f).let { if (it < 1f) "${variant.estimatedDistance} m" else "${"%.1f".format(it)} km" }}")
                 }
             }
 
-            Text(variant.description, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+            Text(variant.description, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
+
+            // Metrics row
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Budget
+                val allCostsReal = variant.steps.all { it.costIsReal }
+                if (variant.estimatedBudget > 0) {
+                    MetricChip(
+                        icon = Icons.Default.Euro,
+                        label = "${if (allCostsReal) "" else "~"}${variant.estimatedBudget} €",
+                        color = Color(0xFF4CAF50)
+                    )
+                } else {
+                    MetricChip(icon = Icons.Default.Euro, label = "Gratuit", color = Color(0xFF4CAF50))
+                }
+                // Effort
+                MetricChip(
+                    icon = Icons.Default.FitnessCenter,
+                    label = "Effort ${"★".repeat(variant.effortScore)}${"☆".repeat(5 - variant.effortScore)}",
+                    color = when (variant.effortScore) {
+                        1, 2 -> Color(0xFF2196F3)
+                        3 -> Color(0xFFFF9800)
+                        else -> Color(0xFFF44336)
+                    }
+                )
+                // Slot
+                variant.suggestedSlot?.let { slot ->
+                    MetricChip(
+                        icon = when (slot) {
+                            "matin" -> Icons.Default.WbTwilight
+                            "soir" -> Icons.Default.Nightlight
+                            else -> Icons.Default.WbSunny
+                        },
+                        label = slot.replaceFirstChar { it.uppercase() },
+                        color = TravelingDeepPurple
+                    )
+                }
+            }
 
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
 
-            Text("${variant.steps.size} étape(s)", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = TravelingDeepPurple)
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expandedSteps = !expandedSteps },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("${variant.steps.size} étape(s)", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = TravelingDeepPurple)
+                Icon(
+                    if (expandedSteps) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    null,
+                    tint = TravelingDeepPurple,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Spacer(modifier = Modifier.height(4.dp))
 
-            variant.steps.take(4).forEachIndexed { index, step ->
+            val stepsToShow = if (expandedSteps) variant.steps else variant.steps.take(4)
+            stepsToShow.forEachIndexed { index, step ->
                 StepRow(index = index + 1, step = step)
             }
-            if (variant.steps.size > 4) {
+            if (!expandedSteps && variant.steps.size > 4) {
                 Text("+ ${variant.steps.size - 4} étape(s)…", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
             }
 
@@ -471,8 +676,8 @@ private fun VariantCard(
 @Composable
 private fun StepRow(index: Int, step: ItineraryStep) {
     Row(
-        modifier = Modifier.padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top
     ) {
         Surface(
             shape = RoundedCornerShape(4.dp),
@@ -484,9 +689,37 @@ private fun StepRow(index: Int, step: ItineraryStep) {
             }
         }
         Spacer(modifier = Modifier.width(8.dp))
-        Column {
+        // Photo thumbnail
+        if (!step.photoUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = step.photoUrl,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
             Text(step.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             step.type?.let { Text(it, fontSize = 11.sp, color = Color.Gray) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                step.openingHours?.let {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Schedule, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(11.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(it, fontSize = 10.sp, color = Color(0xFF4CAF50))
+                    }
+                }
+                if (step.avgCost == 0) {
+                    Text("Gratuit", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Medium)
+                } else if (step.avgCost > 0) {
+                    val prefix = if (step.costIsReal) "" else "~"
+                    Text("${prefix}${step.avgCost} €", fontSize = 10.sp,
+                        color = if (step.costIsReal) Color(0xFF1565C0) else Color.Gray,
+                        fontWeight = if (step.costIsReal) FontWeight.Medium else FontWeight.Normal
+                    )
+                }
+            }
         }
     }
 }
@@ -504,6 +737,23 @@ private fun InfoChip(icon: ImageVector, label: String) {
             Icon(icon, null, tint = TravelingDeepPurple, modifier = Modifier.size(14.dp))
             Spacer(modifier = Modifier.width(4.dp))
             Text(label, fontSize = 12.sp, color = TravelingDeepPurple, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun MetricChip(icon: ImageVector, label: String, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = color.copy(alpha = 0.1f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(13.dp))
+            Spacer(modifier = Modifier.width(3.dp))
+            Text(label, fontSize = 11.sp, color = color, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -545,17 +795,88 @@ private fun ActivityToggle(
         shape = RoundedCornerShape(16.dp),
         color = if (isSelected) TravelingDeepPurple.copy(alpha = 0.15f) else Color.Transparent,
         border = androidx.compose.foundation.BorderStroke(1.5.dp, if (isSelected) TravelingDeepPurple else Color.LightGray),
-        modifier = modifier.height(90.dp).clickable { onClick() }
+        modifier = modifier.height(80.dp).clickable { onClick() }
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(4.dp)
         ) {
-            Icon(icon, null, modifier = Modifier.size(32.dp), tint = if (isSelected) TravelingDeepPurple else Color.Gray)
+            Icon(icon, null, modifier = Modifier.size(26.dp), tint = if (isSelected) TravelingDeepPurple else Color.Gray)
             Spacer(modifier = Modifier.height(4.dp))
-            Text(name, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+            Text(name, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                 color = if (isSelected) TravelingDeepPurple else Color.Gray)
+        }
+    }
+}
+
+@Composable
+private fun EffortChip(
+    label: String,
+    emoji: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) TravelingDeepPurple else TravelingDeepPurple.copy(alpha = 0.07f),
+        modifier = modifier.height(64.dp).clickable { onClick() }
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(emoji, fontSize = 20.sp)
+            Spacer(Modifier.height(2.dp))
+            Text(label, fontSize = 11.sp, color = if (isSelected) Color.White else TravelingDeepPurple, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun SensitivityChip(
+    label: String,
+    emoji: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) Color(0xFF1565C0).copy(alpha = 0.12f) else Color.Transparent,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Color(0xFF1565C0) else Color.LightGray),
+        modifier = modifier.height(56.dp).clickable { onClick() }
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(emoji, fontSize = 16.sp)
+            Text(label, fontSize = 10.sp, color = if (isSelected) Color(0xFF1565C0) else Color.Gray, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun TimeSlotChip(
+    label: String,
+    emoji: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) TravelingDeepPurple else TravelingDeepPurple.copy(alpha = 0.07f),
+        modifier = modifier.height(56.dp).clickable { onClick() }
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(emoji, fontSize = 16.sp)
+            Text(label, fontSize = 10.sp, color = if (isSelected) Color.White else TravelingDeepPurple, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         }
     }
 }
@@ -582,9 +903,7 @@ private fun WeatherDaysPanel(days: List<WeatherDay>) {
                 )
             }
             Spacer(Modifier.height(10.dp))
-            androidx.compose.foundation.lazy.LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(days) { day ->
                     WeatherDayChip(day = day)
                 }
@@ -617,7 +936,6 @@ private fun WeatherDayChip(day: WeatherDay) {
         day.condition.contains("Orage") -> "⛈️"
         else -> "🌡️"
     }
-
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = bgColor,

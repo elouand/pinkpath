@@ -14,7 +14,11 @@ interface ItineraryRepository {
         durationMinutes: Int,
         mode: String,
         activities: List<String>,
-        wantsGoodWeather: Boolean = false
+        wantsGoodWeather: Boolean = false,
+        budget: Int = 0,
+        effortLevel: String = "normal",
+        weatherSensitivity: List<String> = emptyList(),
+        timeSlot: String = "all"
     ): Result<ItineraryVariantsResponse>
 
     suspend fun saveItinerary(

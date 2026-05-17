@@ -5,23 +5,32 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
 import com.traveling.domain.model.Post
 import com.traveling.ui.common.PostCard
-import com.traveling.ui.common.TravelingSearchBar
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagBlue
 import com.traveling.ui.theme.TravelingTagYellow
@@ -31,6 +40,7 @@ import com.traveling.ui.theme.TravelingTagYellow
 fun FeedScreen(
     onPostClick: (String) -> Unit,
     onCreatePostClick: () -> Unit,
+    onUserClick: (Int) -> Unit = {},
     initialGroupName: String? = null,
     initialSearch: String? = null,
     viewModel: PostViewModel = hiltViewModel(),
@@ -41,18 +51,34 @@ fun FeedScreen(
     val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
     val currentUser by authViewModel.currentUser.collectAsState()
     val userGroups by viewModel.groups.collectAsState()
+    val userSearchResults by viewModel.userSearchResults.collectAsState()
 
     var searchQuery by remember { mutableStateOf(initialSearch ?: "") }
     var selectedTab by remember { mutableStateOf(if (initialGroupName != null) "Group" else "Populaires") }
     var expanded by remember { mutableStateOf(false) }
-    
+    var showUserDropdown by remember { mutableStateOf(false) }
+
     var selectedGroup by remember { mutableStateOf<String?>(initialGroupName) }
-    
+
     // Nouveau filtre : Tout, Posts, Itinéraires
     var contentTypeFilter by remember { mutableStateOf("Tout") }
 
-    // Filtrage des posts
-    val filteredPosts = remember(posts, selectedTab, selectedGroup, searchQuery, contentTypeFilter) {
+    // Applied search for posts (only set on Enter/submit)
+    var activePostSearch by remember { mutableStateOf(initialSearch ?: "") }
+
+    // Trigger user search as user types
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isNotBlank()) {
+            viewModel.searchUsers(searchQuery)
+            showUserDropdown = true
+        } else {
+            viewModel.clearUserSearch()
+            showUserDropdown = false
+            activePostSearch = ""
+        }
+    }
+
+    val filteredPosts = remember(posts, selectedTab, selectedGroup, activePostSearch, contentTypeFilter) {
         var result = if (selectedTab == "Populaires") {
             posts.filter { it.isPublic }
         } else {
@@ -66,11 +92,11 @@ fun FeedScreen(
             else -> result
         }
 
-        if (searchQuery.isNotBlank()) {
-            result = result.filter { 
-                it.title?.contains(searchQuery, ignoreCase = true) == true ||
-                it.content?.contains(searchQuery, ignoreCase = true) == true ||
-                it.tags?.any { tag -> tag.contains(searchQuery, ignoreCase = true) } == true
+        if (activePostSearch.isNotBlank()) {
+            result = result.filter {
+                it.title?.contains(activePostSearch, ignoreCase = true) == true ||
+                it.content?.contains(activePostSearch, ignoreCase = true) == true ||
+                it.tags?.any { tag -> tag.contains(activePostSearch, ignoreCase = true) } == true
             }
         }
         result
@@ -103,12 +129,98 @@ fun FeedScreen(
                 .padding(horizontal = 16.dp)
         ) {
             Spacer(modifier = Modifier.height(16.dp))
-            
-            TravelingSearchBar(
-                placeholder = "Rechercher des posts",
-                initialValue = searchQuery,
-                onValueChange = { searchQuery = it }
-            )
+
+            // Hybrid search bar with user dropdown
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color.White.copy(alpha = 0.9f),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Search, null, tint = Color.Gray, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.weight(1f),
+                            textStyle = TextStyle(fontSize = 15.sp, color = MaterialTheme.colorScheme.onBackground),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                activePostSearch = searchQuery
+                                showUserDropdown = false
+                                viewModel.clearUserSearch()
+                            }),
+                            decorationBox = { inner ->
+                                if (searchQuery.isEmpty()) {
+                                    Text("Rechercher posts ou utilisateurs", color = Color.Gray, fontSize = 15.sp)
+                                }
+                                inner()
+                            }
+                        )
+                    }
+                }
+
+                // User results dropdown
+                if (showUserDropdown && userSearchResults.isNotEmpty()) {
+                    DropdownMenu(
+                        expanded = true,
+                        onDismissRequest = { showUserDropdown = false },
+                        modifier = Modifier
+                            .fillMaxWidth(0.92f)
+                            .background(Color.White)
+                    ) {
+                        userSearchResults.forEach { user ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (user.profileUrl != null) {
+                                            AsyncImage(
+                                                model = user.profileUrl,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(32.dp).clip(CircleShape)
+                                            )
+                                        } else {
+                                            Surface(
+                                                modifier = Modifier.size(32.dp),
+                                                shape = CircleShape,
+                                                color = TravelingDeepPurple.copy(alpha = 0.15f)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(Icons.Default.Person, null, tint = TravelingDeepPurple, modifier = Modifier.size(18.dp))
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = user.pseudo ?: user.username,
+                                                fontWeight = FontWeight.Medium,
+                                                color = TravelingDeepPurple,
+                                                fontSize = 14.sp
+                                            )
+                                            if (user.pseudo != null) {
+                                                Text("@${user.username}", fontSize = 12.sp, color = Color.Gray)
+                                            }
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    showUserDropdown = false
+                                    viewModel.clearUserSearch()
+                                    searchQuery = ""
+                                    onUserClick(user.id)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
             
             Spacer(modifier = Modifier.height(16.dp))
 

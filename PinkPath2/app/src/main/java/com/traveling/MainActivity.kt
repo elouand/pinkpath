@@ -38,9 +38,11 @@ import com.traveling.ui.travelshare.CreatePostScreen
 import com.traveling.ui.travelshare.FeedScreen
 import com.traveling.ui.travelshare.HomeScreen
 import com.traveling.ui.travelshare.LoginScreen
+import com.traveling.ui.travelshare.NotificationsScreen
 import com.traveling.ui.travelshare.PostDetailScreen
 import com.traveling.ui.travelshare.PostViewModel
 import com.traveling.ui.travelshare.ProfileScreen
+import com.traveling.ui.travelshare.PublicProfileScreen
 import com.traveling.ui.travelshare.SignupScreen
 import dagger.hilt.android.AndroidEntryPoint
 import org.osmdroid.config.Configuration
@@ -80,6 +82,8 @@ fun MainNavigation() {
             val hideBottomBar = currentRoute?.startsWith("post_detail") == true ||
                                 currentRoute?.startsWith("place_detail") == true ||
                                 currentRoute?.startsWith("group_detail") == true ||
+                                currentRoute?.startsWith("user_profile") == true ||
+                                currentRoute == Screen.Notifications.route ||
                                 currentRoute?.startsWith("create_post") == true ||
                                 currentRoute == Screen.Login.route ||
                                 currentRoute == Screen.Signup.route ||
@@ -123,7 +127,13 @@ fun MainNavigation() {
                 HomeScreen(viewModel = postViewModel, mapViewModel = mapViewModel, onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) }, onNavigateToMap = { navController.navigate(Screen.Map.route) { popUpTo(navController.graph.startDestinationId); launchSingleTop = true } })
             }
             composable(Screen.Feed.route) {
-                FeedScreen(viewModel = postViewModel, authViewModel = authViewModel, onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) }, onCreatePostClick = { navController.navigate(Screen.CreatePost.route) })
+                FeedScreen(
+                    viewModel = postViewModel,
+                    authViewModel = authViewModel,
+                    onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
+                    onCreatePostClick = { navController.navigate(Screen.CreatePost.route) },
+                    onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) }
+                )
             }
             composable(Screen.Map.route) {
                 MapScreen(viewModel = mapViewModel, itineraryViewModel = itineraryViewModel, onPlaceClick = { navController.navigate(Screen.PlaceDetail.createRoute(it)) })
@@ -158,7 +168,22 @@ fun MainNavigation() {
                 )
             }
             composable(Screen.Profile.route) {
-                ProfileScreen(viewModel = authViewModel, onLoginClick = { navController.navigate(Screen.Login.route) }, onSignupClick = { navController.navigate(Screen.Signup.route) })
+                ProfileScreen(
+                    viewModel = authViewModel,
+                    postViewModel = postViewModel,
+                    onLoginClick = { navController.navigate(Screen.Login.route) },
+                    onSignupClick = { navController.navigate(Screen.Signup.route) },
+                    onNotificationsClick = { navController.navigate(Screen.Notifications.route) }
+                )
+            }
+            composable(Screen.Notifications.route) {
+                NotificationsScreen(
+                    onBack = { navController.popBackStack() },
+                    onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
+                    onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) },
+                    onGroupClick = { navController.navigate(Screen.GroupDetail.createRoute(it)) },
+                    viewModel = postViewModel
+                )
             }
             composable(Screen.Login.route) {
                 LoginScreen(viewModel = authViewModel, onLoginSuccess = { navController.navigate(Screen.Profile.route) { popUpTo(Screen.Login.route) { inclusive = true } } })
@@ -182,7 +207,25 @@ fun MainNavigation() {
             composable(Screen.CreateGroup.route) { CreateGroupScreen(onBack = { navController.popBackStack() }) }
             composable(Screen.CreatePath.route) { CreatePathScreen(onBack = { navController.popBackStack() }, viewModel = itineraryViewModel) }
             composable(Screen.GroupDetail.route, arguments = listOf(navArgument("groupId") { type = NavType.IntType })) { backStackEntry ->
-                GroupDetailScreen(groupId = backStackEntry.arguments?.getInt("groupId") ?: 0, onBack = { navController.popBackStack() }, onNavigateToGroupFeed = { navController.navigate(Screen.Feed.route + "?groupName=$it") }, onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) })
+                GroupDetailScreen(
+                    groupId = backStackEntry.arguments?.getInt("groupId") ?: 0,
+                    onBack = { navController.popBackStack() },
+                    onNavigateToGroupFeed = { navController.navigate(Screen.Feed.route + "?groupName=$it") },
+                    onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
+                    itineraryViewModel = itineraryViewModel
+                )
+            }
+            composable(
+                Screen.UserProfile.route,
+                arguments = listOf(navArgument("userId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                PublicProfileScreen(
+                    userId = backStackEntry.arguments?.getInt("userId") ?: 0,
+                    onBack = { navController.popBackStack() },
+                    onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
+                    viewModel = postViewModel,
+                    authViewModel = authViewModel
+                )
             }
         }
     }

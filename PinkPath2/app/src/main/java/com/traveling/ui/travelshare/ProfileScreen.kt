@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -31,12 +32,19 @@ import com.traveling.util.uriToFile
 @Composable
 fun ProfileScreen(
     viewModel: AuthViewModel,
+    postViewModel: PostViewModel,
     onLoginClick: () -> Unit,
-    onSignupClick: () -> Unit
+    onSignupClick: () -> Unit,
+    onNotificationsClick: () -> Unit = {}
 ) {
     val currentUser by viewModel.currentUser.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val unreadCount by postViewModel.unreadNotificationCount.collectAsState()
     val context = LocalContext.current
+
+    LaunchedEffect(currentUser) {
+        if (currentUser != null) postViewModel.loadNotifications()
+    }
 
     val imageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -54,14 +62,32 @@ fun ProfileScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Settings Icon at Top Right
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+        // Icons row: Notifications + Settings
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            if (currentUser != null) {
+                BadgedBox(
+                    badge = {
+                        if (unreadCount > 0) {
+                            Badge { Text(if (unreadCount > 9) "9+" else unreadCount.toString()) }
+                        }
+                    }
+                ) {
+                    IconButton(onClick = onNotificationsClick) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = "Notifications",
+                            tint = TravelingDeepPurple,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+            }
             IconButton(onClick = { /* TODO */ }) {
                 Icon(
                     imageVector = Icons.Default.Settings,
                     contentDescription = "Settings",
                     tint = TravelingDeepPurple,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(32.dp)
                 )
             }
         }
