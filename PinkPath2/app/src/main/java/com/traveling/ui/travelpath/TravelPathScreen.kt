@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.SavedItinerary
 import com.traveling.ui.common.TravelingSearchBar
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagYellow
@@ -34,14 +35,19 @@ fun TravelPathScreen(
     onCreatePathClick: () -> Unit,
     onCreateGroupClick: () -> Unit,
     onGroupClick: (Int) -> Unit = {},
-    viewModel: PostViewModel = hiltViewModel()
+    onNavigateToMap: () -> Unit = {},
+    onNavigateToEditItinerary: () -> Unit = {},
+    viewModel: PostViewModel = hiltViewModel(),
+    itineraryViewModel: ItineraryViewModel = hiltViewModel()
 ) {
     var selectedTab by remember { mutableStateOf("itinéraires") }
     val groups by viewModel.groups.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val itineraryState by itineraryViewModel.uiState.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.loadUserGroups()
+        itineraryViewModel.loadItineraries()
     }
 
     Scaffold(
@@ -108,12 +114,26 @@ fun TravelPathScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (selectedTab == "itinéraires") {
-                        item {
-                            PathCard(
-                                name = "promenade",
-                                locationsCount = "2 lieu",
-                                duration = "1h30"
-                            )
+                        if (itineraryState.savedItineraries.isEmpty()) {
+                            item {
+                                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Text("Aucun itinéraire sauvegardé.\nAppuyez sur + pour en créer un.", color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                }
+                            }
+                        } else {
+                            items(itineraryState.savedItineraries) { itinerary ->
+                                SavedItineraryCard(
+                                    itinerary = itinerary,
+                                    onModify = {
+                                        itineraryViewModel.startEdit(itinerary)
+                                        onNavigateToEditItinerary()
+                                    },
+                                    onStart = {
+                                        itineraryViewModel.startItinerary(itinerary)
+                                        onNavigateToMap()
+                                    }
+                                )
+                            }
                         }
                     } else {
                         if (groups.isEmpty()) {
@@ -158,6 +178,65 @@ fun TabItem(text: String, isSelected: Boolean, onClick: () -> Unit) {
                 color = if (isSelected) TravelingDeepPurple else Color.Gray,
                 fontSize = 18.sp
             )
+        }
+    }
+}
+
+@Composable
+fun SavedItineraryCard(
+    itinerary: SavedItinerary,
+    onModify: () -> Unit = {},
+    onStart: () -> Unit = {}
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)),
+        elevation = CardDefaults.cardElevation(2.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(itinerary.name, style = MaterialTheme.typography.titleMedium, color = TravelingDeepPurple, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.LocationOn, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("${itinerary.stepsCount} lieu(x)", fontSize = 13.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Schedule, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("${itinerary.duration} min", fontSize = 13.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.DirectionsWalk, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (itinerary.mode == "jogging") "Gros effort" else "Effort modéré", fontSize = 13.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onModify,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TravelingDeepPurple)
+                ) {
+                    Icon(Icons.Default.Info, null, modifier = Modifier.size(15.dp), tint = TravelingDeepPurple)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Infos", color = TravelingDeepPurple, fontSize = 13.sp)
+                }
+                Button(
+                    onClick = onStart,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Commencer", fontSize = 13.sp)
+                }
+            }
         }
     }
 }

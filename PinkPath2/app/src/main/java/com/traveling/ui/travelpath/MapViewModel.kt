@@ -24,7 +24,10 @@ data class MapUiState(
     val isSearching: Boolean = false,
     val currentRoute: List<RoutePoint>? = null,
     val isCalculatingRoute: Boolean = false,
-    val userLocation: RoutePoint? = null // On stocke la position de l'utilisateur
+    val userLocation: RoutePoint? = null,
+    val pendingCenter: Pair<Double, Double>? = null,
+    val pendingPlaceId: String? = null,
+    val isSearchingDetails: Boolean = false
 )
 
 @HiltViewModel
@@ -99,5 +102,39 @@ class MapViewModel @Inject constructor(
 
     fun clearRoute() {
         _uiState.value = _uiState.value.copy(currentRoute = null)
+    }
+
+    fun setPendingCenter(lat: Double, lon: Double) {
+        _uiState.value = _uiState.value.copy(pendingCenter = Pair(lat, lon))
+    }
+
+    fun clearPendingCenter() {
+        _uiState.value = _uiState.value.copy(pendingCenter = null)
+    }
+
+    fun searchPlaceForNavigation(name: String, lat: Double, lon: Double) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSearchingDetails = true)
+            try {
+                val results = photonApi.search(query = name, limit = 10, lat = lat, lon = lon)
+                val match = results.features
+                    .filter { it.properties.osmType == "N" && it.properties.osmId != null }
+                    .minByOrNull { f ->
+                        val dLat = f.geometry.latitude - lat
+                        val dLon = f.geometry.longitude - lon
+                        dLat * dLat + dLon * dLon
+                    }
+                _uiState.value = _uiState.value.copy(
+                    pendingPlaceId = match?.properties?.osmId?.toString(),
+                    isSearchingDetails = false
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isSearchingDetails = false)
+            }
+        }
+    }
+
+    fun clearPendingPlaceId() {
+        _uiState.value = _uiState.value.copy(pendingPlaceId = null)
     }
 }

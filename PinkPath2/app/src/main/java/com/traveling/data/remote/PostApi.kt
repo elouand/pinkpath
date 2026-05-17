@@ -3,6 +3,7 @@ package com.traveling.data.remote
 import com.google.gson.annotations.SerializedName
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.ShareItineraryRequest
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.http.*
@@ -64,4 +65,10 @@ interface PostApi {
         @Path("groupId") groupId: Int,
         @Body request: AddUserToGroupRequest
     ): Map<String, Any>
+
+    @POST("itineraries/{id}/share")
+    suspend fun shareItinerary(
+        @Path("id") id: Int,
+        @Body request: ShareItineraryRequest
+    ): Post
 }

@@ -3,6 +3,7 @@ package com.traveling.data.repository
 import com.traveling.data.remote.*
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.ShareItineraryRequest
 import com.traveling.domain.repository.PostRepository
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -138,6 +139,15 @@ class PostRepositoryImpl @Inject constructor(
     override suspend fun addUserToGroup(groupId: Int, usernameToAdd: String): Result<Unit> {
         return try {
             api.addUserToGroup(groupId, AddUserToGroupRequest(usernameToAdd))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun shareItinerary(itineraryId: Int, userId: Int, description: String): Result<Unit> {
+        return try {
+            api.shareItinerary(itineraryId, ShareItineraryRequest(userId, description))
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

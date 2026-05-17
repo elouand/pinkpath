@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -30,15 +31,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
+import com.traveling.domain.model.SharedItineraryData
 import com.traveling.ui.theme.TravelingDeepPurple
+import com.traveling.ui.travelpath.ItineraryViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PostDetailScreen(
-    postId: String, 
+    postId: String,
     onBack: () -> Unit,
     viewModel: PostViewModel = hiltViewModel(),
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    itineraryViewModel: ItineraryViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val posts by viewModel.posts.collectAsState()
@@ -49,6 +53,7 @@ fun PostDetailScreen(
     val currentUser by authViewModel.currentUser.collectAsState()
     val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
     val error by viewModel.error.collectAsState()
+    val itineraryState by itineraryViewModel.uiState.collectAsState()
 
     var commentText by remember { mutableStateOf("") }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -257,7 +262,24 @@ fun PostDetailScreen(
                     Text(text = "${post.commentsCount}", fontWeight = FontWeight.Bold)
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Panneau itinéraire partagé
+                post.sharedItinerary?.let { itinerary ->
+                    SharedItineraryPanel(
+                        itinerary = itinerary,
+                        isCopied = itineraryState.copySuccess,
+                        isLoggedIn = isLoggedIn,
+                        onCopy = {
+                            val userId = currentUser?.id?.toIntOrNull() ?: return@SharedItineraryPanel
+                            itineraryViewModel.copyItinerary(itinerary.id, userId)
+                        }
+                    )
+                    LaunchedEffect(itineraryState.copySuccess) {
+                        if (itineraryState.copySuccess) itineraryViewModel.clearCopySuccess()
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 // Section Commentaires
                 Text(
@@ -336,6 +358,90 @@ fun PostDetailScreen(
                 }
                 
                 Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedItineraryPanel(
+    itinerary: SharedItineraryData,
+    isCopied: Boolean,
+    isLoggedIn: Boolean,
+    onCopy: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = TravelingDeepPurple.copy(alpha = 0.06f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, TravelingDeepPurple.copy(alpha = 0.25f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.AutoMirrored.Filled.DirectionsWalk, null, tint = TravelingDeepPurple, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    itinerary.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TravelingDeepPurple,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Schedule, null, tint = TravelingDeepPurple, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("${itinerary.duration} min", fontSize = 12.sp, color = Color.Gray)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Straighten, null, tint = TravelingDeepPurple, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    val distKm = itinerary.distance / 1000.0
+                    Text(if (distKm < 1) "${itinerary.distance.toInt()} m" else "${"%.1f".format(distKm)} km", fontSize = 12.sp, color = Color.Gray)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.LocationOn, null, tint = TravelingDeepPurple, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("${itinerary.steps.size} étape(s)", fontSize = 12.sp, color = Color.Gray)
+                }
+            }
+            if (itinerary.steps.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                itinerary.steps.take(4).forEachIndexed { i, step ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                        Surface(shape = RoundedCornerShape(4.dp), color = TravelingDeepPurple, modifier = Modifier.size(18.dp)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("${i + 1}", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(step.name, fontSize = 13.sp)
+                    }
+                }
+                if (itinerary.steps.size > 4) {
+                    Text("+ ${itinerary.steps.size - 4} étape(s)…", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            if (isCopied) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF388E3C), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Ajouté à vos itinéraires !", color = Color(0xFF388E3C), fontWeight = FontWeight.Medium)
+                }
+            } else {
+                Button(
+                    onClick = onCopy,
+                    enabled = isLoggedIn,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isLoggedIn) "Récupérer cet itinéraire" else "Connectez-vous pour récupérer")
+                }
             }
         }
     }

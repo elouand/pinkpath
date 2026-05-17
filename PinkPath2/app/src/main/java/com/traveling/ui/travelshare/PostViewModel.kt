@@ -12,6 +12,7 @@ import com.traveling.domain.repository.PostRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import java.io.File
@@ -204,4 +205,17 @@ class PostViewModel @Inject constructor(
     fun clearError() {
         _error.value = null
     }
+
+    private val _shareSuccess = MutableStateFlow(false)
+    val shareSuccess = _shareSuccess.asStateFlow()
+
+    fun shareItinerary(itineraryId: Int, userId: Int, description: String) {
+        viewModelScope.launch {
+            repository.shareItinerary(itineraryId, userId, description)
+                .onSuccess { _shareSuccess.value = true }
+                .onFailure { handleError(it, "partage itinéraire") }
+        }
+    }
+
+    fun clearShareSuccess() { _shareSuccess.value = false }
 }

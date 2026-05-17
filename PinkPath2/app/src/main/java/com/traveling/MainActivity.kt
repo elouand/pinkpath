@@ -1,6 +1,8 @@
 package com.traveling
 
 import android.os.Bundle
+import android.preference.PreferenceManager
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -24,6 +26,8 @@ import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTheme
 import com.traveling.ui.travelpath.CreateGroupScreen
 import com.traveling.ui.travelpath.CreatePathScreen
+import com.traveling.ui.travelpath.EditItineraryScreen
+import com.traveling.ui.travelpath.ItineraryViewModel
 import com.traveling.ui.travelpath.MapScreen
 import com.traveling.ui.travelpath.MapViewModel
 import com.traveling.ui.travelpath.PlaceDetailScreen
@@ -38,11 +42,18 @@ import com.traveling.ui.travelshare.PostViewModel
 import com.traveling.ui.travelshare.ProfileScreen
 import com.traveling.ui.travelshare.SignupScreen
 import dagger.hilt.android.AndroidEntryPoint
+import org.osmdroid.config.Configuration
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Configuration OSMDroid : cache privé obligatoire sur Android 10+ (scoped storage)
+        Configuration.getInstance().load(this, PreferenceManager.getDefaultSharedPreferences(this))
+        Configuration.getInstance().userAgentValue = packageName
+        Configuration.getInstance().osmdroidTileCache = File(cacheDir, "osmdroid")
+
         enableEdgeToEdge()
         setContent {
             TravelingTheme {
@@ -61,16 +72,19 @@ fun MainNavigation() {
     // ViewModels partagés au niveau de la navigation
     val authViewModel: AuthViewModel = hiltViewModel()
     val postViewModel: PostViewModel = hiltViewModel()
+    val itineraryViewModel: ItineraryViewModel = hiltViewModel()
+    val mapViewModel: MapViewModel = hiltViewModel()
 
     Scaffold(
         bottomBar = {
-            val hideBottomBar = currentRoute?.startsWith("post_detail") == true || 
+            val hideBottomBar = currentRoute?.startsWith("post_detail") == true ||
                                 currentRoute?.startsWith("place_detail") == true ||
                                 currentRoute == Screen.CreatePost.route ||
                                 currentRoute == Screen.Login.route ||
                                 currentRoute == Screen.Signup.route ||
                                 currentRoute == Screen.CreateGroup.route ||
-                                currentRoute == Screen.CreatePath.route
+                                currentRoute == Screen.CreatePath.route ||
+                                currentRoute == Screen.EditItinerary.route
             
             if (!hideBottomBar) {
                 NavigationBar(
@@ -139,8 +153,15 @@ fun MainNavigation() {
             composable(Screen.Home.route) {
                 HomeScreen(
                     viewModel = postViewModel,
+                    mapViewModel = mapViewModel,
                     onPostClick = { postId ->
                         navController.navigate(Screen.PostDetail.createRoute(postId))
+                    },
+                    onNavigateToMap = {
+                        navController.navigate(Screen.Map.route) {
+                            popUpTo(navController.graph.startDestinationId)
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -158,6 +179,8 @@ fun MainNavigation() {
             }
             composable(Screen.Map.route) {
                 MapScreen(
+                    viewModel = mapViewModel,
+                    itineraryViewModel = itineraryViewModel,
                     onPlaceClick = { placeId ->
                         navController.navigate(Screen.PlaceDetail.createRoute(placeId))
                     }
@@ -168,13 +191,6 @@ fun MainNavigation() {
                 arguments = listOf(navArgument("placeId") { type = NavType.StringType })
             ) { backStackEntry ->
                 val placeId = backStackEntry.arguments?.getString("placeId") ?: ""
-                
-                // On récupère l'instance du MapViewModel liée à l'écran de la carte
-                val parentEntry = remember(backStackEntry) {
-                    navController.getBackStackEntry(Screen.Map.route)
-                }
-                val mapViewModel: MapViewModel = hiltViewModel(parentEntry)
-
                 PlaceDetailScreen(
                     placeId = placeId,
                     mapViewModel = mapViewModel,
@@ -187,10 +203,11 @@ fun MainNavigation() {
             ) { backStackEntry ->
                 val postId = backStackEntry.arguments?.getString("postId") ?: ""
                 PostDetailScreen(
-                    postId = postId, 
+                    postId = postId,
                     onBack = { navController.popBackStack() },
                     viewModel = postViewModel,
-                    authViewModel = authViewModel
+                    authViewModel = authViewModel,
+                    itineraryViewModel = itineraryViewModel
                 )
             }
             composable(Screen.CreatePost.route) {
@@ -230,14 +247,33 @@ fun MainNavigation() {
             composable(Screen.Path.route) {
                 TravelPathScreen(
                     onCreatePathClick = { navController.navigate(Screen.CreatePath.route) },
-                    onCreateGroupClick = { navController.navigate(Screen.CreateGroup.route) }
+                    onCreateGroupClick = { navController.navigate(Screen.CreateGroup.route) },
+                    onNavigateToMap = {
+                        navController.navigate(Screen.Map.route) {
+                            popUpTo(navController.graph.startDestinationId)
+                            launchSingleTop = true
+                        }
+                    },
+                    onNavigateToEditItinerary = { navController.navigate(Screen.EditItinerary.route) },
+                    itineraryViewModel = itineraryViewModel
+                )
+            }
+            composable(Screen.EditItinerary.route) {
+                EditItineraryScreen(
+                    onBack = { navController.popBackStack() },
+                    viewModel = itineraryViewModel,
+                    postViewModel = postViewModel,
+                    authViewModel = authViewModel
                 )
             }
             composable(Screen.CreateGroup.route) {
                 CreateGroupScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.CreatePath.route) {
-                CreatePathScreen(onBack = { navController.popBackStack() })
+                CreatePathScreen(
+                    onBack = { navController.popBackStack() },
+                    viewModel = itineraryViewModel
+                )
             }
         }
     }

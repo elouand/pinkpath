@@ -11,6 +11,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const PDFDocument = require('pdfkit');
 const cache = new Map();
 
 const JWT_SECRET = "ton_secret_ultra_confidentiel"; // Change ça pour la prod
@@ -29,7 +30,7 @@ const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 // --- CONFIGURATION ---
 // IMPORTANT : Remplace "0.0.0.0" ici par ton IP réelle (ex: 192.168.1.XX)
 // pour que ton téléphone puisse charger les images !
-const SERVER_IP = "10.139.5.174"//"192.168.1.25"; 
+const SERVER_IP = "192.168.1.113"//"192.168.1.25"; 
 const PORT = 3000;
 const BASE_URL = `http://${SERVER_IP}:${PORT}`;
 
@@ -123,12 +124,13 @@ app.get('/api/photos', async (req, res) => {
                     ] : [])
                 ]
             },
-            include: { 
+            include: {
                 author: true,
                 tags: true,
                 group: true,
                 _count: { select: { comments: true } },
-                likedBy: userId ? { where: { userId: userId } } : false
+                likedBy: userId ? { where: { userId: userId } } : false,
+                itinerary: { include: { steps: { orderBy: { order: 'asc' } } } }
             },
             orderBy: { date: 'desc' }
         });
@@ -139,8 +141,8 @@ app.get('/api/photos', async (req, res) => {
             content: p.description,
             latitude: p.latitude,
             longitude: p.longitude,
-           imageUrl: `${BASE_URL}${p.url}`,
-            audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null,             
+            imageUrl: p.url ? `${BASE_URL}${p.url}` : null,
+            audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null,
             author: p.author ? (p.author.pseudo || p.author.username) : "Anonyme",
             authorAvatarUrl: p.author && p.author.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
             likes: p.likesCount || 0,
@@ -148,7 +150,19 @@ app.get('/api/photos', async (req, res) => {
             isLiked: p.likedBy && p.likedBy.length > 0,
             tags: p.tags.map(t => t.name),
             groupName: p.group ? p.group.name : null,
-            isPublic: p.is_public // Confirmé pour l'onglet "Populaires"
+            isPublic: p.is_public,
+            itineraryId: p.itineraryId || null,
+            sharedItinerary: p.itinerary ? {
+                id: p.itinerary.id,
+                name: p.itinerary.name,
+                duration: p.itinerary.duration,
+                distance: p.itinerary.distance,
+                mode: p.itinerary.mode,
+                steps: p.itinerary.steps.map(s => ({
+                    id: s.id, order: s.order, name: s.name,
+                    type: s.type, latitude: s.latitude, longitude: s.longitude
+                }))
+            } : null
         }));
 
         res.json(formattedPosts);
@@ -539,9 +553,14 @@ app.post('/api/photos/:photoId/like', async (req, res) => {
  * Récupère les lieux autour de l'utilisateur en temps réel depuis OpenStreetMap
  */
 async function fetchWithRetry(url, data, retries = 2) {
+
     try {
-        return await axios.post(url, data, {
-            headers: { 'Content-Type': 'text/plain' },
+        const params = new URLSearchParams({ data });
+        return await axios.post(url, params.toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'TravelingApp/1.0 (contact@traveling.app)'
+            },
             timeout: 15000
         });
     } catch (error) {
@@ -554,7 +573,9 @@ async function fetchWithRetry(url, data, retries = 2) {
 }
 
 app.get('/api/places/nearby', async (req, res) => {
+
     try {
+        console.log(`nearby request received`);
         const { lat, lon } = req.query;
 
         if (!lat || !lon) {
@@ -906,6 +927,580 @@ app.patch('/api/groups/:groupId/role', async (req, res) => {
 
 
 
+
+// ─────────────────────────────────────────────────────────
+// ITINÉRAIRES
+// ─────────────────────────────────────────────────────────
+
+function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// Effort modéré = marche 5 km/h, Gros effort = jogging 8 km/h
+const MODE_SPEED = { walking: 83, jogging: 133, driving: 500 }; // m/min
+const VISIT_TIME = 20; // min par POI
+
+// Facteur de Tobler normalisé : 1.0 sur terrain plat, < 1 en montée/descente forte
+function toblerFactor(elevDiff, distM) {
+    if (distM < 1) return 1;
+    const slope = elevDiff / distM;
+    return Math.max(Math.exp(-3.5 * Math.abs(slope + 0.05)) / 0.8408, 0.3);
+}
+
+// Récupère les altitudes via OpenTopoData (fallback = 0 si indisponible)
+async function getElevations(coords) {
+    if (coords.length === 0) return [];
+    try {
+        const locations = coords.map(([lat, lon]) => `${lat},${lon}`).join('|');
+        const resp = await axios.get(
+            `https://api.opentopodata.org/v1/srtm30m?locations=${locations}`,
+            { timeout: 4000, headers: { 'User-Agent': 'TravelingApp/1.0' } }
+        );
+        return (resp.data.results || []).map(r => r.elevation || 0);
+    } catch {
+        return coords.map(() => 0); // terrain plat par défaut
+    }
+}
+
+function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed) {
+    let remaining = durationMin;
+    let curLat = startLat, curLon = startLon, curElev = startElev;
+    const steps = [];
+    const pool = [...poisPool];
+    let totalDist = 0;
+
+    while (pool.length > 0 && remaining > VISIT_TIME) {
+        let bestIdx = -1, bestDist = Infinity;
+        for (let i = 0; i < pool.length; i++) {
+            const d = haversine(curLat, curLon, pool[i].lat, pool[i].lon);
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        const poi = pool[bestIdx];
+        const adjSpeed = speed * toblerFactor((poi.elev || 0) - curElev, bestDist);
+        const travelMin = bestDist / adjSpeed;
+        if (travelMin + VISIT_TIME > remaining) break;
+        pool.splice(bestIdx, 1);
+        steps.push({ name: poi.name, type: poi.type, lat: poi.lat, lon: poi.lon });
+        totalDist += bestDist;
+        remaining -= travelMin + VISIT_TIME;
+        curLat = poi.lat; curLon = poi.lon; curElev = poi.elev || 0;
+    }
+    return { steps, totalDist: Math.round(totalDist), usedMin: Math.round(durationMin - remaining) };
+}
+
+// WMO weather code → libellé français
+function weatherLabel(code) {
+    if (code === 0) return "Ensoleillé";
+    if (code <= 2) return "Peu nuageux";
+    if (code === 3) return "Nuageux";
+    if (code <= 48) return "Brouillard";
+    if (code <= 57) return "Bruine";
+    if (code <= 67) return "Pluie";
+    if (code <= 77) return "Neige";
+    if (code <= 82) return "Averses";
+    return "Orage";
+}
+
+async function getWeatherForecast(lat, lon) {
+    try {
+        const resp = await axios.get('https://api.open-meteo.com/v1/forecast', {
+            params: {
+                latitude: lat,
+                longitude: lon,
+                daily: 'weathercode,precipitation_sum',
+                timezone: 'auto',
+                forecast_days: 7
+            },
+            timeout: 5000
+        });
+        const { time, weathercode, precipitation_sum } = resp.data.daily;
+        const today = new Date().toISOString().slice(0, 10);
+        const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+        const DAYS_FR = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
+        const MONTHS_FR = ['jan.', 'fév.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+        return time.map((date, i) => {
+            const d = new Date(date + 'T12:00:00');
+            let label;
+            if (date === today) label = "Aujourd'hui";
+            else if (date === tomorrow) label = "Demain";
+            else label = `${DAYS_FR[d.getDay()]} ${d.getDate()} ${MONTHS_FR[d.getMonth()]}`;
+            const code = weathercode[i];
+            const precip = precipitation_sum[i] || 0;
+            return {
+                date,
+                label,
+                condition: weatherLabel(code),
+                isGood: code <= 2 && precip < 1
+            };
+        });
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * [POST] /api/itineraries/generate
+ * Body: { locations:[{lat,lon,name}], durationMinutes, mode, activities:[String], wantsGoodWeather?:Boolean }
+ */
+app.post('/api/itineraries/generate', async (req, res) => {
+    try {
+        const { locations, durationMinutes, mode, activities, wantsGoodWeather } = req.body;
+        if (!locations || locations.length === 0) {
+            return res.status(400).json({ error: "Au moins un lieu requis" });
+        }
+
+        const startLat = locations[0].lat;
+        const startLon = locations[0].lon;
+        const duration = parseInt(durationMinutes) || 60;
+        const speed = MODE_SPEED[mode] || MODE_SPEED.walking;
+        const radius = Math.min(speed * (duration / 2), 2000);
+
+        const activityFilters = [];
+        if (!activities || activities.length === 0 || activities.includes('Restauration')) {
+            activityFilters.push(`node["amenity"~"restaurant|cafe|bar|bakery|fast_food"](around:${radius},${startLat},${startLon});`);
+        }
+        if (!activities || activities.length === 0 || activities.includes('Culture')) {
+            activityFilters.push(`node["tourism"~"museum|gallery|attraction|monument"](around:${radius},${startLat},${startLon});`);
+        }
+        if (!activities || activities.length === 0 || activities.includes('Loisirs')) {
+            activityFilters.push(`node["leisure"~"park|garden|playground"](around:${radius},${startLat},${startLon});`);
+            activityFilters.push(`node["amenity"~"cinema|theatre|library"](around:${radius},${startLat},${startLon});`);
+        }
+
+        if (activityFilters.length === 0) {
+            return res.status(400).json({ error: "Aucune catégorie sélectionnée" });
+        }
+
+        const query = `[out:json][timeout:15];(${activityFilters.join('')});out body;`;
+        const params = new URLSearchParams({ data: query });
+        const osmRes = await axios.post('https://overpass-api.de/api/interpreter', params.toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'TravelingApp/1.0 (contact@traveling.app)'
+            },
+            timeout: 20000
+        });
+
+        const pois = (osmRes.data.elements || [])
+            .filter(el => el.tags?.name && el.lat && el.lon)
+            .map(el => ({
+                name: el.tags.name,
+                type: el.tags.amenity || el.tags.tourism || el.tags.leisure || 'lieu',
+                lat: el.lat,
+                lon: el.lon,
+                category: el.tags.amenity && (el.tags.amenity.includes('restaurant') || el.tags.amenity.includes('cafe') || el.tags.amenity.includes('bar') || el.tags.amenity.includes('food'))
+                    ? 'Restauration'
+                    : el.tags.tourism ? 'Culture' : 'Loisirs'
+            }));
+
+        if (pois.length === 0) {
+            return res.status(404).json({ error: "Aucun lieu trouvé dans cette zone. Essayez un rayon plus large ou d'autres activités." });
+        }
+
+        // Récupérer les altitudes pour tous les POIs
+        const poisCoords = pois.map(p => [p.lat, p.lon]);
+        const elevations = await getElevations(poisCoords);
+        pois.forEach((p, i) => { p.elev = elevations[i] || 0; });
+
+        // Variante 1 – Découverte : tous les POIs, greedy nearest-neighbor
+        const v1 = buildRoute(pois, startLat, startLon, 0, duration, speed);
+
+        // Variante 2 – Thématique : catégorie principale en priorité
+        const primaryCategory = (activities && activities.length > 0) ? activities[0] : 'Restauration';
+        const primaryPois = pois.filter(p => p.category === primaryCategory);
+        const secondaryPois = pois.filter(p => p.category !== primaryCategory);
+        const v2 = buildRoute(
+            primaryPois.length > 0 ? [...primaryPois, ...secondaryPois] : pois,
+            startLat, startLon, 0, duration, speed
+        );
+
+        // Variante 3 – Panoramique : max 2 POIs par catégorie (variété forcée)
+        const byCategory = {};
+        for (const p of pois) {
+            if (!byCategory[p.category]) byCategory[p.category] = [];
+            byCategory[p.category].push(p);
+        }
+        const diversePool = Object.values(byCategory).flatMap(arr => arr.slice(0, 2));
+        const v3 = buildRoute(diversePool, startLat, startLon, 0, duration, speed);
+
+        const toVariant = (name, description, route) => ({
+            name,
+            description,
+            estimatedDuration: route.usedMin,
+            estimatedDistance: route.totalDist,
+            steps: route.steps
+        });
+
+        const variants = [
+            toVariant("Découverte", "Un mix équilibré de lieux à visiter autour de vous", v1),
+            toVariant("Thématique", `Centré sur ${primaryCategory.toLowerCase()} avec quelques extras`, v2),
+            toVariant("Panoramique", "Un tour varié avec un lieu par catégorie", v3)
+        ].filter(v => v.steps.length > 0);
+
+        if (variants.length === 0) {
+            return res.status(404).json({ error: "Pas assez de temps ou de lieux pour créer un itinéraire" });
+        }
+
+        console.log(`✅ ${variants.length} variante(s) générée(s) à partir de ${pois.length} lieux`);
+
+        let goodWeatherDays = null;
+        if (wantsGoodWeather) {
+            goodWeatherDays = await getWeatherForecast(startLat, startLon);
+            console.log(`☀️  Météo récupérée : ${goodWeatherDays?.length ?? 0} jours`);
+        }
+
+        res.json({ variants, goodWeatherDays });
+
+    } catch (error) {
+        if (error.response) {
+            console.error("💥 Erreur Overpass:", error.response.status, error.response.data?.substring?.(0, 200));
+        } else {
+            console.error("💥 Erreur génération itinéraire:", error.message);
+        }
+        res.status(500).json({ error: "Erreur lors de la génération de l'itinéraire" });
+    }
+});
+
+/**
+ * [POST] /api/itineraries/save
+ * Body: { userId, name, duration, distance, mode, steps:[{name,type,lat,lon}] }
+ */
+app.post('/api/itineraries/save', async (req, res) => {
+    try {
+        const { userId, name, duration, distance, mode, steps } = req.body;
+        if (!userId || !name || !steps) {
+            return res.status(400).json({ error: "Champs manquants" });
+        }
+        const itinerary = await prisma.itinerary.create({
+            data: {
+                name,
+                duration: parseInt(duration) || 0,
+                distance: parseFloat(distance) || 0,
+                mode: mode || 'walking',
+                authorId: parseInt(userId),
+                steps: {
+                    create: steps.map((s, i) => ({
+                        order: i,
+                        name: s.name,
+                        type: s.type || null,
+                        latitude: s.lat,
+                        longitude: s.lon
+                    }))
+                }
+            },
+            include: { steps: { orderBy: { order: 'asc' } } }
+        });
+        console.log(`✅ Itinéraire "${name}" sauvegardé (${steps.length} étapes)`);
+        res.status(201).json(itinerary);
+    } catch (error) {
+        console.error("💥 Erreur sauvegarde itinéraire:", error);
+        res.status(500).json({ error: "Erreur lors de la sauvegarde" });
+    }
+});
+
+/**
+ * [GET] /api/users/:userId/itineraries
+ */
+app.get('/api/users/:userId/itineraries', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const itineraries = await prisma.itinerary.findMany({
+            where: { authorId: parseInt(userId) },
+            include: { _count: { select: { steps: true } } },
+            orderBy: { createdAt: 'desc' }
+        });
+        res.json(itineraries.map(it => ({
+            id: it.id,
+            name: it.name,
+            duration: it.duration,
+            distance: it.distance,
+            mode: it.mode,
+            createdAt: it.createdAt,
+            stepsCount: it._count.steps
+        })));
+    } catch (error) {
+        console.error("💥 Erreur récupération itinéraires:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+/**
+ * [PATCH] /api/itineraries/:id
+ * Met à jour l'ordre/contenu des étapes d'un itinéraire existant
+ * Body: { name, steps:[{name,type,latitude,longitude}] }
+ */
+app.patch('/api/itineraries/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, steps } = req.body;
+        if (!steps) return res.status(400).json({ error: "steps requis" });
+
+        await prisma.itineraryStep.deleteMany({ where: { itineraryId: parseInt(id) } });
+
+        const itinerary = await prisma.itinerary.update({
+            where: { id: parseInt(id) },
+            data: {
+                ...(name && { name }),
+                steps: {
+                    create: steps.map((s, i) => ({
+                        order: i,
+                        name: s.name,
+                        type: s.type || null,
+                        latitude: s.latitude,
+                        longitude: s.longitude
+                    }))
+                }
+            },
+            include: { steps: { orderBy: { order: 'asc' } } }
+        });
+
+        console.log(`✅ Itinéraire ${id} mis à jour (${steps.length} étapes)`);
+        res.json(itinerary);
+    } catch (error) {
+        console.error("💥 Erreur mise à jour itinéraire:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+/**
+ * [GET] /api/itineraries/:id
+ * Retourne l'itinéraire complet avec toutes ses étapes (lat/lon inclus)
+ */
+app.get('/api/itineraries/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const itinerary = await prisma.itinerary.findUnique({
+            where: { id: parseInt(id) },
+            include: { steps: { orderBy: { order: 'asc' } } }
+        });
+        if (!itinerary) return res.status(404).json({ error: "Itinéraire non trouvé" });
+        res.json(itinerary);
+    } catch (error) {
+        console.error("💥 Erreur récupération itinéraire:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+/**
+ * [GET] /api/route/multi
+ * Calcule un trajet multi-étapes via OSRM
+ * Query: waypoints=lat1,lon1;lat2,lon2;... & mode=walking|jogging|driving
+ */
+app.get('/api/route/multi', async (req, res) => {
+    try {
+        const { waypoints, mode } = req.query;
+        if (!waypoints) return res.status(400).json({ error: "waypoints requis" });
+
+        const profile = (mode === 'jogging') ? 'walking' : (mode || 'walking');
+        const waypointStr = waypoints.split(';').map(w => {
+            const [lat, lon] = w.split(',');
+            return `${parseFloat(lon)},${parseFloat(lat)}`;
+        }).join(';');
+
+        const osrmUrl = `https://router.project-osrm.org/route/v1/${profile}/${waypointStr}?overview=full&geometries=geojson`;
+        const response = await axios.get(osrmUrl, {
+            headers: { 'User-Agent': 'TravelingApp/1.0' },
+            timeout: 15000
+        });
+
+        if (!response.data?.routes?.length) {
+            return res.status(404).json({ error: "Aucune route trouvée" });
+        }
+
+        const route = response.data.routes[0];
+        const points = route.geometry.coordinates.map(([lon, lat]) => ({ latitude: lat, longitude: lon }));
+
+        res.json({
+            points,
+            distance: Math.round(route.distance),
+            duration: Math.round(route.duration)
+        });
+    } catch (error) {
+        console.error("💥 Erreur route multi:", error.message);
+        res.status(500).json({ error: "Impossible de calculer le trajet" });
+    }
+});
+
+/**
+ * [POST] /api/itineraries/:id/share
+ * Crée un post public lié à cet itinéraire
+ * Body: { userId, description }
+ */
+app.post('/api/itineraries/:id/share', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { userId, description } = req.body;
+        if (!userId) return res.status(400).json({ error: "userId requis" });
+
+        const itinerary = await prisma.itinerary.findUnique({
+            where: { id: parseInt(id) },
+            include: { steps: { orderBy: { order: 'asc' } } }
+        });
+        if (!itinerary) return res.status(404).json({ error: "Itinéraire non trouvé" });
+
+        const firstStep = itinerary.steps[0];
+        const photo = await prisma.photo.create({
+            data: {
+                url: '',
+                description: description || `Itinéraire : ${itinerary.name}`,
+                type_lieu: itinerary.name,
+                latitude: firstStep?.latitude || 0,
+                longitude: firstStep?.longitude || 0,
+                is_public: true,
+                authorId: parseInt(userId),
+                itineraryId: parseInt(id),
+                likesCount: 0
+            },
+            include: { author: true, itinerary: { include: { steps: { orderBy: { order: 'asc' } } } } }
+        });
+
+        console.log(`📤 Itinéraire "${itinerary.name}" partagé par user ${userId}`);
+        res.status(201).json({
+            id: photo.id.toString(),
+            title: photo.type_lieu,
+            content: photo.description,
+            itineraryId: photo.itineraryId,
+            sharedItinerary: photo.itinerary ? {
+                id: photo.itinerary.id,
+                name: photo.itinerary.name,
+                duration: photo.itinerary.duration,
+                distance: photo.itinerary.distance,
+                mode: photo.itinerary.mode,
+                steps: photo.itinerary.steps.map(s => ({
+                    id: s.id, order: s.order, name: s.name,
+                    type: s.type, latitude: s.latitude, longitude: s.longitude
+                }))
+            } : null
+        });
+    } catch (error) {
+        console.error("💥 Erreur partage itinéraire:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+/**
+ * [POST] /api/itineraries/:id/copy
+ * Copie un itinéraire dans la liste de l'utilisateur
+ * Body: { userId }
+ */
+app.post('/api/itineraries/:id/copy', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: "userId requis" });
+
+        const original = await prisma.itinerary.findUnique({
+            where: { id: parseInt(id) },
+            include: { steps: { orderBy: { order: 'asc' } } }
+        });
+        if (!original) return res.status(404).json({ error: "Itinéraire non trouvé" });
+
+        const copy = await prisma.itinerary.create({
+            data: {
+                name: `${original.name} (copié)`,
+                duration: original.duration,
+                distance: original.distance,
+                mode: original.mode,
+                authorId: parseInt(userId),
+                steps: {
+                    create: original.steps.map(s => ({
+                        order: s.order, name: s.name, type: s.type,
+                        latitude: s.latitude, longitude: s.longitude
+                    }))
+                }
+            },
+            include: { steps: true }
+        });
+
+        console.log(`📋 Itinéraire #${id} copié → #${copy.id} pour user ${userId}`);
+        res.status(201).json({
+            id: copy.id, name: copy.name, duration: copy.duration,
+            distance: copy.distance, mode: copy.mode,
+            stepsCount: copy.steps.length, createdAt: copy.createdAt
+        });
+    } catch (error) {
+        console.error("💥 Erreur copie itinéraire:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
+
+/**
+ * [GET] /api/itineraries/:id/pdf
+ * Génère et retourne un PDF de l'itinéraire
+ */
+app.get('/api/itineraries/:id/pdf', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const itinerary = await prisma.itinerary.findUnique({
+            where: { id: parseInt(id) },
+            include: { steps: { orderBy: { order: 'asc' } }, author: true }
+        });
+        if (!itinerary) return res.status(404).json({ error: "Itinéraire non trouvé" });
+
+        const safeName = itinerary.name.replace(/[^a-z0-9]/gi, '_');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="itineraire_${safeName}.pdf"`);
+
+        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        doc.pipe(res);
+
+        // En-tête
+        doc.fontSize(22).fillColor('#5C3D91').text(itinerary.name, { align: 'center' });
+        doc.moveDown(0.3);
+        doc.fontSize(11).fillColor('#888888').text(
+            `Créé par ${itinerary.author?.pseudo || itinerary.author?.username || 'Anonyme'}  •  ${new Date(itinerary.createdAt).toLocaleDateString('fr-FR')}`,
+            { align: 'center' }
+        );
+        doc.moveDown(0.8);
+
+        // Ligne de séparation
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#CCCCCC').stroke();
+        doc.moveDown(0.6);
+
+        // Infos générales
+        const modeLbl = itinerary.mode === 'jogging' ? 'Gros effort (jogging)' : 'Effort modéré (marche)';
+        const distKm = (itinerary.distance / 1000).toFixed(1);
+        doc.fontSize(12).fillColor('#333333');
+        doc.text(`Durée estimée : ${itinerary.duration} min`, { continued: true });
+        doc.text(`   •   Distance : ${distKm} km`, { continued: true });
+        doc.text(`   •   Mode : ${modeLbl}`);
+        doc.moveDown(1);
+
+        // Étapes
+        doc.fontSize(14).fillColor('#5C3D91').text('Étapes de l\'itinéraire', { underline: true });
+        doc.moveDown(0.5);
+
+        itinerary.steps.forEach((step, i) => {
+            const isLast = i === itinerary.steps.length - 1;
+            doc.fontSize(12).fillColor('#333333')
+                .text(`${i + 1}.  ${step.name}`, { continued: !!step.type });
+            if (step.type) {
+                doc.fontSize(10).fillColor('#888888').text(`  (${step.type})`);
+            }
+            doc.fontSize(9).fillColor('#AAAAAA')
+                .text(`       ${step.latitude.toFixed(5)}, ${step.longitude.toFixed(5)}`);
+            if (!isLast) {
+                doc.fontSize(9).fillColor('#BBBBBB').text('       ↓', { align: 'left' });
+            }
+            doc.moveDown(0.3);
+        });
+
+        doc.moveDown(1);
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#CCCCCC').stroke();
+        doc.moveDown(0.5);
+        doc.fontSize(9).fillColor('#BBBBBB').text('Généré par PinkPath', { align: 'center' });
+
+        doc.end();
+    } catch (error) {
+        console.error("💥 Erreur génération PDF:", error);
+        if (!res.headersSent) res.status(500).json({ error: "Erreur génération PDF" });
+    }
+});
 
 // Lancement
 app.listen(PORT, '0.0.0.0', () => {

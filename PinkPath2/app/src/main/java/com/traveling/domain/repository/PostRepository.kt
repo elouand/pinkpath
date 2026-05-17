@@ -36,4 +36,5 @@ interface PostRepository {
         image: File? = null
     ): Result<Group>
     suspend fun addUserToGroup(groupId: Int, usernameToAdd: String): Result<Unit>
+    suspend fun shareItinerary(itineraryId: Int, userId: Int, description: String): Result<Unit>
 }

@@ -19,33 +19,62 @@ model User {
   email       String?       @unique
   profileUrl  String?
   photos      Photo[]
-  members     GroupMember[] // <--- C'EST CETTE LIGNE QUI DOIT REMPLACER "groups"
+  members     GroupMember[]
   comments    Comment[]
   likes       Like[]
+  itineraries Itinerary[]
+}
+
+model Itinerary {
+  id          Int             @id @default(autoincrement())
+  name        String
+  duration    Int
+  distance    Float
+  mode        String
+  createdAt   DateTime        @default(now())
+  author      User            @relation(fields: [authorId], references: [id])
+  authorId    Int
+  steps       ItineraryStep[]
+  sharedPosts Photo[]         @relation("SharedItinerary")
+}
+
+model ItineraryStep {
+  id          Int       @id @default(autoincrement())
+  order       Int
+  name        String
+  type        String?
+  latitude    Float
+  longitude   Float
+  itinerary   Itinerary @relation(fields: [itineraryId], references: [id], onDelete: Cascade)
+  itineraryId Int
 }
 
 
 model Photo {
-  id          Int       @id @default(autoincrement())
+  id          Int        @id @default(autoincrement())
   url         String
   audioUrl    String?
   description String?
   type_lieu   String
   latitude    Float
   longitude   Float
-  date        DateTime  @default(now())
-  is_public   Boolean   @default(true)
-  
+  date        DateTime   @default(now())
+  is_public   Boolean    @default(true)
+
   // Relations existantes
-  author      User?     @relation(fields: [authorId], references: [id])
+  author      User?      @relation(fields: [authorId], references: [id])
   authorId    Int?
   groupId     Int?
-  group       Group?    @relation(fields: [groupId], references: [id])
-  
+  group       Group?     @relation(fields: [groupId], references: [id])
+
+  // Itinéraire partagé (optionnel)
+  itineraryId Int?
+  itinerary   Itinerary? @relation("SharedItinerary", fields: [itineraryId], references: [id])
+
   // --- NOUVEAUX CHAMPS ---
-  tags        Tag[]     
+  tags        Tag[]
   comments    Comment[]
-  likesCount  Int       @default(0)
+  likesCount  Int        @default(0)
   likedBy     Like[]
 }
 
