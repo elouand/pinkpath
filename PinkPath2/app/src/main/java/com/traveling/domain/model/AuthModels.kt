@@ -18,7 +18,8 @@ data class UserData(
     val username: String? = null,
     val pseudo: String? = null,
     val email: String? = null,
-    val profileUrl: String? = null
+    val profileUrl: String? = null,
+    val role: String? = null // Ajouté pour les rôles dans les groupes
 )
 
 data class RegisterResponse(

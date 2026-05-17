@@ -4,6 +4,7 @@ import com.traveling.data.remote.CommentResponse
 import com.traveling.data.remote.LikeResponse
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.JoinRequest
 import java.io.File
 
 interface PostRepository {
@@ -36,5 +37,11 @@ interface PostRepository {
         image: File? = null
     ): Result<Group>
     suspend fun addUserToGroup(groupId: Int, usernameToAdd: String): Result<Unit>
-    suspend fun shareItinerary(itineraryId: Int, userId: Int, description: String): Result<Unit>
+    suspend fun shareItinerary(itineraryId: Int, userId: Int, description: String, isPublic: Boolean = true, groupId: Int? = null): Result<Unit>
+    suspend fun getGroupDetails(groupId: Int): Result<Group>
+    suspend fun getJoinRequests(groupId: Int): Result<List<JoinRequest>>
+    suspend fun respondToJoinRequest(groupId: Int, requestId: Int, accept: Boolean): Result<Unit>
+    
+    suspend fun searchGroups(query: String, userId: Int? = null): Result<List<Group>>
+    suspend fun joinGroup(groupId: Int, userId: Int): Result<Unit>
 }

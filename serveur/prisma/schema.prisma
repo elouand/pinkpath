@@ -11,18 +11,20 @@ enum Role {
   MODERATOR
   MEMBER
 }
+
 model User {
-  id          Int           @id @default(autoincrement())
-  username    String        @unique
-  pseudo      String?
-  password    String
-  email       String?       @unique
-  profileUrl  String?
-  photos      Photo[]
-  members     GroupMember[]
-  comments    Comment[]
-  likes       Like[]
-  itineraries Itinerary[]
+  id           Int           @id @default(autoincrement())
+  username     String        @unique
+  pseudo       String?
+  password     String
+  email        String?       @unique
+  profileUrl   String?
+  photos       Photo[]
+  members      GroupMember[]
+  comments     Comment[]
+  likes        Like[]
+  itineraries  Itinerary[]
+  joinRequests JoinRequest[]
 }
 
 model Itinerary {
@@ -49,33 +51,32 @@ model ItineraryStep {
   itineraryId Int
 }
 
-
 model Photo {
-  id          Int        @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   url         String
   audioUrl    String?
   description String?
   type_lieu   String
   latitude    Float
   longitude   Float
-  date        DateTime   @default(now())
-  is_public   Boolean    @default(true)
+  date        DateTime @default(now())
+  is_public   Boolean  @default(true)
 
   // Relations existantes
-  author      User?      @relation(fields: [authorId], references: [id])
-  authorId    Int?
-  groupId     Int?
-  group       Group?     @relation(fields: [groupId], references: [id])
+  author   User?  @relation(fields: [authorId], references: [id])
+  authorId Int?
+  groupId  Int?
+  group    Group? @relation(fields: [groupId], references: [id])
 
   // Itinéraire partagé (optionnel)
   itineraryId Int?
   itinerary   Itinerary? @relation("SharedItinerary", fields: [itineraryId], references: [id])
 
   // --- NOUVEAUX CHAMPS ---
-  tags        Tag[]
-  comments    Comment[]
-  likesCount  Int        @default(0)
-  likedBy     Like[]
+  tags       Tag[]
+  comments   Comment[]
+  likesCount Int       @default(0)
+  likedBy    Like[]
 }
 
 model Tag {
@@ -84,63 +85,71 @@ model Tag {
   photos Photo[]
 }
 
-
-
-
 model Comment {
   id        Int      @id @default(autoincrement())
   text      String
   createdAt DateTime @default(now())
-  
+
   // L'auteur du commentaire
-  author    User     @relation(fields: [authorId], references: [id])
-  authorId  Int
-  
+  author   User @relation(fields: [authorId], references: [id])
+  authorId Int
+
   // La photo concernée
-  photo     Photo    @relation(fields: [photoId], references: [id])
-  photoId   Int
+  photo   Photo @relation(fields: [photoId], references: [id])
+  photoId Int
 }
 
-
 model Group {
-  id          Int           @id @default(autoincrement())
-  name        String
-  description String?
-  imageUrl    String?
-  isPublic    Boolean       @default(true)
-  members     GroupMember[] // <--- ET CELLE-CI POUR LE MIROIR
-  photos      Photo[]
+  id           Int           @id @default(autoincrement())
+  name         String
+  description  String?
+  imageUrl     String?
+  isPublic     Boolean       @default(true)
+  members      GroupMember[] // <--- ET CELLE-CI POUR LE MIROIR
+  photos       Photo[]
+  joinRequests JoinRequest[]
 }
 
 model GroupMember {
-  id      Int    @id @default(autoincrement())
-  role    Role   @default(MEMBER)
-  user    User   @relation(fields: [userId], references: [id])
+  id      Int   @id @default(autoincrement())
+  role    Role  @default(MEMBER)
+  user    User  @relation(fields: [userId], references: [id])
   userId  Int
-  group   Group  @relation(fields: [groupId], references: [id])
+  group   Group @relation(fields: [groupId], references: [id])
   groupId Int
 
   @@unique([userId, groupId])
 }
 
 model Like {
-  id      Int    @id @default(autoincrement())
-  user    User   @relation(fields: [userId], references: [id])
+  id      Int   @id @default(autoincrement())
+  user    User  @relation(fields: [userId], references: [id])
   userId  Int
-  photo   Photo  @relation(fields: [photoId], references: [id])
+  photo   Photo @relation(fields: [photoId], references: [id])
   photoId Int
 
   // ⚠️ CETTE LIGNE EST LA CLÉ :
   // Elle interdit d'avoir deux fois le même couple userId/photoId
-  @@unique([userId, photoId]) 
-}
-model PointOfInterest {
-  id          Int      @id @default(autoincrement())
-  name        String
-  category    String   // restauration, loisirs, culture [cite: 51]
-  latitude    Float
-  longitude   Float
-  budget_est  Float
-  effort_lvl  Int      // 1 à 5 (enfants, seniors) [cite: 52]
+  @@unique([userId, photoId])
 }
 
+model PointOfInterest {
+  id         Int    @id @default(autoincrement())
+  name       String
+  category   String // restauration, loisirs, culture [cite: 51]
+  latitude   Float
+  longitude  Float
+  budget_est Float
+  effort_lvl Int // 1 à 5 (enfants, seniors) [cite: 52]
+}
+
+model JoinRequest {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  groupId   Int
+  user      User     @relation(fields: [userId], references: [id])
+  group     Group    @relation(fields: [groupId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, groupId])
+}

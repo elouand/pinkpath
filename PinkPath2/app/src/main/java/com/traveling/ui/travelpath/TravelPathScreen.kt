@@ -1,5 +1,7 @@
 package com.traveling.ui.travelpath
 
+import android.widget.Toast
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,7 +19,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,6 +34,7 @@ import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagYellow
 import com.traveling.ui.travelshare.PostViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TravelPathScreen(
     onCreatePathClick: () -> Unit,
@@ -40,25 +45,79 @@ fun TravelPathScreen(
     viewModel: PostViewModel = hiltViewModel(),
     itineraryViewModel: ItineraryViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
     var selectedTab by remember { mutableStateOf("itinéraires") }
-    val groups by viewModel.groups.collectAsState()
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
+
+    val userGroups by viewModel.groups.collectAsState()
+    val searchResults by viewModel.searchResults.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val itineraryState by itineraryViewModel.uiState.collectAsState()
+    val toastMessage by viewModel.toastMessage.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.loadUserGroups()
         itineraryViewModel.loadItineraries()
     }
 
+    LaunchedEffect(toastMessage) {
+        toastMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearToast()
+        }
+    }
+
+    LaunchedEffect(searchQuery, selectedTab) {
+        if (selectedTab == "groupes" && searchQuery.isNotBlank()) {
+            viewModel.searchGroups(searchQuery)
+        }
+    }
+
+    val filteredItineraries = remember(searchQuery, itineraryState.savedItineraries) {
+        if (searchQuery.isBlank()) itineraryState.savedItineraries
+        else itineraryState.savedItineraries.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    }
+
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { 
+                    if (!isSearchActive) {
+                        Text(
+                            text = if (selectedTab == "itinéraires") "Mes Itinéraires" else "Mes Groupes",
+                            color = TravelingDeepPurple,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        TravelingSearchBar(
+                            placeholder = if (selectedTab == "itinéraires") "Filtrer mes trajets..." else "Découvrir des groupes...",
+                            initialValue = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { 
+                        isSearchActive = !isSearchActive
+                        if (!isSearchActive) searchQuery = ""
+                    }) {
+                        Icon(
+                            imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = TravelingDeepPurple
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    if (selectedTab == "itinéraires") {
-                        onCreatePathClick()
-                    } else {
-                        onCreateGroupClick()
-                    }
+                    if (selectedTab == "itinéraires") onCreatePathClick()
+                    else onCreateGroupClick()
                 },
                 containerColor = TravelingDeepPurple,
                 contentColor = Color.White,
@@ -76,37 +135,23 @@ fun TravelPathScreen(
                 .padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-
-            TravelingSearchBar(
-                placeholder = if (selectedTab == "itinéraires") "Rechercher un itinéraire" else "Rechercher un groupe"
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = Color.LightGray.copy(alpha = 0.3f),
                 modifier = Modifier.height(40.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TabItem(
-                        text = "itinéraires",
-                        isSelected = selectedTab == "itinéraires",
-                        onClick = { selectedTab = "itinéraires" }
-                    )
-                    TabItem(
-                        text = "groupes",
-                        isSelected = selectedTab == "groupes",
-                        onClick = { selectedTab = "groupes" }
-                    )
+                    TabItem(text = "itinéraires", isSelected = selectedTab == "itinéraires", onClick = { selectedTab = "itinéraires" })
+                    TabItem(text = "groupes", isSelected = selectedTab == "groupes", onClick = { selectedTab = "groupes" })
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            if (isLoading && selectedTab == "groupes") {
-                CircularProgressIndicator(color = TravelingDeepPurple)
+            if (isLoading && searchQuery.isNotBlank() && selectedTab == "groupes") {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = TravelingDeepPurple)
+                }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -114,42 +159,48 @@ fun TravelPathScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (selectedTab == "itinéraires") {
-                        if (itineraryState.savedItineraries.isEmpty()) {
+                        if (filteredItineraries.isEmpty()) {
                             item {
                                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                                    Text("Aucun itinéraire sauvegardé.\nAppuyez sur + pour en créer un.", color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                    Text(
+                                        text = if (searchQuery.isBlank()) "Aucun itinéraire sauvegardé." else "Aucun résultat pour \"$searchQuery\"",
+                                        color = Color.Gray,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         } else {
-                            items(itineraryState.savedItineraries) { itinerary ->
+                            items(filteredItineraries) { itinerary ->
                                 SavedItineraryCard(
                                     itinerary = itinerary,
-                                    onModify = {
-                                        itineraryViewModel.startEdit(itinerary)
-                                        onNavigateToEditItinerary()
-                                    },
-                                    onStart = {
-                                        itineraryViewModel.startItinerary(itinerary)
-                                        onNavigateToMap()
-                                    }
+                                    onModify = { itineraryViewModel.startEdit(itinerary); onNavigateToEditItinerary() },
+                                    onStart = { itineraryViewModel.startItinerary(itinerary); onNavigateToMap() }
                                 )
                             }
                         }
                     } else {
-                        if (groups.isEmpty()) {
-                            item {
-                                Text(
-                                    "Aucun groupe trouvé",
-                                    modifier = Modifier.padding(16.dp),
-                                    color = Color.Gray
-                                )
+                        if (searchQuery.isBlank()) {
+                            if (userGroups.isEmpty()) {
+                                item { Text("Vous n'êtes membre d'aucun groupe.", color = Color.Gray, modifier = Modifier.padding(16.dp), textAlign = TextAlign.Center) }
+                            } else {
+                                items(userGroups) { group ->
+                                    GroupCard(group = group, onClick = { onGroupClick(group.id) })
+                                }
                             }
                         } else {
-                            items(groups) { group ->
-                                GroupCard(
-                                    group = group,
-                                    onClick = { onGroupClick(group.id) }
-                                )
+                            if (searchResults.isEmpty() && !isLoading) {
+                                item { Text("Aucun groupe trouvé pour \"$searchQuery\".", color = Color.Gray, modifier = Modifier.padding(16.dp), textAlign = TextAlign.Center) }
+                            } else {
+                                items(searchResults) { group ->
+                                    val isMember = userGroups.any { it.id == group.id }
+                                    GroupCard(
+                                        group = group, 
+                                        onClick = { if (isMember) onGroupClick(group.id) },
+                                        isSearchItem = true,
+                                        isMember = isMember,
+                                        onJoinClick = { viewModel.joinGroup(group.id) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -164,30 +215,16 @@ fun TabItem(text: String, isSelected: Boolean, onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = if (isSelected) TravelingTagYellow else Color.Transparent,
-        modifier = Modifier
-            .clickable { onClick() }
-            .fillMaxHeight()
+        modifier = Modifier.clickable { onClick() }.fillMaxHeight()
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        ) {
-            Text(
-                text = text,
-                fontWeight = FontWeight.Bold,
-                color = if (isSelected) TravelingDeepPurple else Color.Gray,
-                fontSize = 18.sp
-            )
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 24.dp)) {
+            Text(text = text, fontWeight = FontWeight.Bold, color = if (isSelected) TravelingDeepPurple else Color.Gray, fontSize = 16.sp)
         }
     }
 }
 
 @Composable
-fun SavedItineraryCard(
-    itinerary: SavedItinerary,
-    onModify: () -> Unit = {},
-    onStart: () -> Unit = {}
-) {
+fun SavedItineraryCard(itinerary: SavedItinerary, onModify: () -> Unit, onStart: () -> Unit) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)),
@@ -201,40 +238,21 @@ fun SavedItineraryCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.LocationOn, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("${itinerary.stepsCount} lieu(x)", fontSize = 13.sp)
+                    Text("${itinerary.stepsCount} lieux", fontSize = 13.sp)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Schedule, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("${itinerary.duration} min", fontSize = 13.sp)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.DirectionsWalk, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (itinerary.mode == "jogging") "Gros effort" else "Effort modéré", fontSize = 13.sp)
-                }
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onModify,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, TravelingDeepPurple)
-                ) {
-                    Icon(Icons.Default.Info, null, modifier = Modifier.size(15.dp), tint = TravelingDeepPurple)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Infos", color = TravelingDeepPurple, fontSize = 13.sp)
+                OutlinedButton(onClick = onModify, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) {
+                    Text("Infos", color = TravelingDeepPurple)
                 }
-                Button(
-                    onClick = onStart,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Commencer", fontSize = 13.sp)
+                Button(onClick = onStart, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple), shape = RoundedCornerShape(10.dp)) {
+                    Text("Démarrer")
                 }
             }
         }
@@ -242,185 +260,68 @@ fun SavedItineraryCard(
 }
 
 @Composable
-fun PathCard(name: String, locationsCount: String, duration: String) {
-    Card(
-        shape = RoundedCornerShape(32.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.7f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = name,
-                style = MaterialTheme.typography.titleLarge,
-                color = TravelingDeepPurple,
-                fontSize = 24.sp
-            )
-            
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Box(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(CircleShape)
-                        .background(Color.LightGray)
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = TravelingDeepPurple)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = locationsCount, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Schedule, contentDescription = null, tint = TravelingDeepPurple)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = duration, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = { /* TODO */ },
-                colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.width(150.dp)
-            ) {
-                Text("Voir plus", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@Composable
-fun GroupCard(group: Group, onClick: () -> Unit) {
+fun GroupCard(
+    group: Group, 
+    onClick: () -> Unit,
+    isSearchItem: Boolean = false,
+    isMember: Boolean = true,
+    onJoinClick: () -> Unit = {}
+) {
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable(enabled = isMember) { onClick() },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Group Image Preview
-                Surface(
-                    modifier = Modifier
-                        .size(60.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    color = TravelingDeepPurple.copy(alpha = 0.1f)
-                ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Surface(modifier = Modifier.size(60.dp).clip(RoundedCornerShape(12.dp)), color = TravelingDeepPurple.copy(alpha = 0.1f)) {
                     if (group.imageUrl != null) {
-                        AsyncImage(
-                            model = group.imageUrl,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop
-                        )
+                        AsyncImage(model = group.imageUrl, contentDescription = null, contentScale = ContentScale.Crop)
                     } else {
-                        Icon(
-                            Icons.Default.Group,
-                            contentDescription = null,
-                            tint = TravelingDeepPurple,
-                            modifier = Modifier.padding(12.dp)
-                        )
+                        Icon(Icons.Default.Group, null, tint = TravelingDeepPurple, modifier = Modifier.padding(12.dp))
                     }
                 }
 
                 Spacer(modifier = Modifier.width(16.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = group.name ?: "Sans nom",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = TravelingDeepPurple,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    group.description?.let {
+                    Text(text = group.name, style = MaterialTheme.typography.titleLarge, color = TravelingDeepPurple, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    group.description?.let { Text(text = it, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+
+                if (isSearchItem && !isMember) {
+                    Button(
+                        onClick = onJoinClick,
+                        enabled = !group.isPending,
+                        colors = ButtonDefaults.buttonColors(containerColor = if (group.isPending) Color.Gray else TravelingDeepPurple),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
                         Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.Gray,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            text = when {
+                                group.isPending -> "En attente..."
+                                group.isPublic -> "Rejoindre"
+                                else -> "Demander"
+                            },
+                            fontSize = 12.sp
                         )
                     }
                 }
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    val sharedPaths = group.count?.paths ?: 0
-                    val postsCount = group.count?.photos ?: 0
-                    
-                    Badge(containerColor = TravelingTagYellow.copy(alpha = 0.2f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.DirectionsWalk, null, modifier = Modifier.size(14.dp), tint = TravelingDeepPurple)
-                            Text(" $sharedPaths", color = TravelingDeepPurple)
+            if (isMember) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Badge(containerColor = TravelingTagYellow.copy(alpha = 0.2f)) {
+                            Text("${group.count?.paths ?: 0} itinéraires", modifier = Modifier.padding(4.dp), color = TravelingDeepPurple, fontSize = 10.sp)
+                        }
+                        Badge(containerColor = TravelingDeepPurple.copy(alpha = 0.1f)) {
+                            Text("${group.count?.photos ?: 0} posts", modifier = Modifier.padding(4.dp), color = TravelingDeepPurple, fontSize = 10.sp)
                         }
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Badge(containerColor = TravelingDeepPurple.copy(alpha = 0.1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
-                            Icon(Icons.Default.PhotoLibrary, null, modifier = Modifier.size(14.dp), tint = TravelingDeepPurple)
-                            Text(" $postsCount", color = TravelingDeepPurple)
-                        }
-                    }
-                }
-
-                // Member previews
-                Row {
-                    val members = group.users ?: emptyList()
-                    members.take(3).forEachIndexed { index, user ->
-                        Surface(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .offset(x = (index * -8).dp)
-                                .clip(CircleShape)
-                                .background(Color.LightGray),
-                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White)
-                        ) {
-                            if (user.profileUrl != null) {
-                                AsyncImage(
-                                    model = user.profileUrl,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Icon(Icons.Default.Person, null, modifier = Modifier.padding(4.dp), tint = Color.Gray)
-                            }
-                        }
-                    }
-                    val totalUsers = group.count?.users ?: members.size
-                    if (totalUsers > 3) {
-                        Text(
-                            text = "+${totalUsers - 3}",
-                            modifier = Modifier
-                                .padding(start = 4.dp)
-                                .align(Alignment.CenterVertically),
-                            fontSize = 12.sp,
-                            color = Color.Gray,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Text("${group.count?.users ?: 0} membres", fontSize = 12.sp, color = Color.Gray)
                 }
             }
         }

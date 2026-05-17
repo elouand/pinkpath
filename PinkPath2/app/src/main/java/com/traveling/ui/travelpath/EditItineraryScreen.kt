@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -34,6 +36,7 @@ fun EditItineraryScreen(
     val shareSuccess by postViewModel.shareSuccess.collectAsState()
     val currentUser by authViewModel.currentUser.collectAsState()
     val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
+    val userGroups by postViewModel.groups.collectAsState()
     val editItinerary = uiState.editItinerary
     val context = LocalContext.current
 
@@ -252,16 +255,45 @@ fun EditItineraryScreen(
 
     // ── Dialog de partage ───────────────────────────────────────────────
     if (showShareDialog) {
+        val selectedGroupIds = remember { mutableStateListOf<Int>() }
+        var isPublic by remember { mutableStateOf(true) }
+
         AlertDialog(
             onDismissRequest = { showShareDialog = false },
             title = { Text("Partager l'itinéraire") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
-                        "Votre itinéraire « ${editItinerary.name} » sera visible par tous.",
+                        "Où souhaitez-vous partager « ${editItinerary.name} » ?",
                         color = Color.Gray, fontSize = 13.sp
                     )
-                    Spacer(Modifier.height(12.dp))
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = isPublic, onCheckedChange = { isPublic = it })
+                        Text("🌍 Public")
+                    }
+
+                    if (userGroups.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text("Mes Groupes :", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        userGroups.forEach { group ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = selectedGroupIds.contains(group.id),
+                                    onCheckedChange = { checked ->
+                                        if (checked) selectedGroupIds.add(group.id)
+                                        else selectedGroupIds.remove(group.id)
+                                    }
+                                )
+                                Text("👥 ${group.name}")
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = shareDescription,
                         onValueChange = { shareDescription = it },
@@ -276,10 +308,19 @@ fun EditItineraryScreen(
                 Button(
                     onClick = {
                         val userId = currentUser?.id?.toIntOrNull() ?: return@Button
-                        postViewModel.shareItinerary(editItinerary.id, userId, shareDescription)
+                        
+                        if (isPublic) {
+                            postViewModel.shareItinerary(editItinerary.id, userId, shareDescription, true, null)
+                        }
+                        
+                        selectedGroupIds.forEach { groupId ->
+                            postViewModel.shareItinerary(editItinerary.id, userId, shareDescription, false, groupId)
+                        }
+                        
                         showShareDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple)
+                    colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
+                    enabled = isPublic || selectedGroupIds.isNotEmpty()
                 ) {
                     Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))

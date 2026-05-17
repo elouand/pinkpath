@@ -84,10 +84,8 @@ fun HomeScreen(
         }
     }
 
-    // Le SearchBar Material3 ne peut pas être dans un LazyColumn — on le place en dehors
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Barre de recherche en haut, hors du LazyColumn
             SearchBar(
                 query = searchQuery,
                 onQueryChange = {
@@ -150,7 +148,6 @@ fun HomeScreen(
                 }
             }
 
-            // Contenu principal (visible uniquement quand la recherche n'est pas active)
             if (!isSearchActive) {
                 PullToRefreshBox(
                     isRefreshing = isLoading,
@@ -166,7 +163,6 @@ fun HomeScreen(
                     ) {
                         item { Spacer(modifier = Modifier.height(8.dp)) }
 
-                        // Section Autour de moi
                         item {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -189,7 +185,6 @@ fun HomeScreen(
                             }
                         }
 
-                        // Posts populaires
                         item {
                             Text(
                                 text = "Posts populaires",
@@ -229,7 +224,8 @@ fun HomeScreen(
                                             viewModel.toggleLike(post.id, userId)
                                         }
                                     },
-                                    onClick = { onPostClick(post.id) }
+                                    onClick = { onPostClick(post.id) },
+                                    sharedItinerary = post.sharedItinerary
                                 )
                             }
                         }

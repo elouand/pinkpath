@@ -5,11 +5,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -26,11 +28,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.traveling.domain.model.PlaceDetails
+import com.traveling.ui.common.PostCard
 import com.traveling.ui.theme.TravelingDeepPurple
+import com.traveling.ui.theme.TravelingTagBlue
+import com.traveling.ui.travelshare.AuthViewModel
+import com.traveling.ui.travelshare.PostViewModel
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,23 +45,27 @@ import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 fun PlaceDetailScreen(
     placeId: String,
     viewModel: PlaceViewModel = hiltViewModel(),
-    mapViewModel: MapViewModel, // Reçoit le ViewModel partagé
-    onBack: () -> Unit
+    mapViewModel: MapViewModel,
+    postViewModel: PostViewModel = hiltViewModel(),
+    authViewModel: AuthViewModel = hiltViewModel(),
+    onBack: () -> Unit,
+    onCreatePostClick: (String, Double, Double) -> Unit,
+    onPostClick: (String) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val mapState by mapViewModel.uiState.collectAsState()
+    val posts by postViewModel.posts.collectAsState()
+    val currentUser by authViewModel.currentUser.collectAsState()
     val context = LocalContext.current
     var showTransportDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(placeId) {
-        Log.d("PlaceDetail", "🔍 Chargement des détails pour: $placeId")
         viewModel.loadPlaceDetails(placeId)
+        postViewModel.loadPosts()
     }
 
-    // Si le trajet est calculé avec succès dans le ViewModel partagé, on quitte
     LaunchedEffect(mapState.currentRoute) {
         if (mapState.currentRoute != null && mapState.currentRoute!!.isNotEmpty()) {
-            Log.d("PlaceDetail", "✅ Trajet reçu avec succès, retour à la carte")
             onBack()
         }
     }
@@ -77,18 +88,30 @@ fun PlaceDetailScreen(
         },
         floatingActionButton = {
             if (state is PlaceDetailState.Success) {
-                ExtendedFloatingActionButton(
-                    onClick = { showTransportDialog = true },
-                    containerColor = TravelingDeepPurple,
-                    contentColor = Color.White,
-                    icon = { 
-                        if (mapState.isCalculatingRoute) 
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
-                        else 
-                            Icon(Icons.Default.Directions, contentDescription = null) 
-                    },
-                    text = { Text("Y aller") }
-                )
+                val details = (state as PlaceDetailState.Success).details
+                Column(horizontalAlignment = Alignment.End) {
+                    SmallFloatingActionButton(
+                        onClick = { onCreatePostClick(details.name, details.latitude, details.longitude) },
+                        containerColor = TravelingDeepPurple,
+                        contentColor = Color.White,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Créer un post")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ExtendedFloatingActionButton(
+                        onClick = { showTransportDialog = true },
+                        containerColor = TravelingDeepPurple,
+                        contentColor = Color.White,
+                        icon = { 
+                            if (mapState.isCalculatingRoute) 
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                            else 
+                                Icon(Icons.Default.Directions, contentDescription = null) 
+                        },
+                        text = { Text("Y aller") }
+                    )
+                }
             }
         }
     ) { padding ->
@@ -96,7 +119,16 @@ fun PlaceDetailScreen(
             when (val currentState = state) {
                 is PlaceDetailState.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = TravelingDeepPurple)
                 is PlaceDetailState.Error -> Text(currentState.message, modifier = Modifier.align(Alignment.Center), color = Color.Red)
-                is PlaceDetailState.Success -> PlaceDetailsContent(details = currentState.details)
+                is PlaceDetailState.Success -> PlaceDetailsContent(
+                    details = currentState.details,
+                    posts = posts.filter { it.title == currentState.details.name },
+                    onPostClick = onPostClick,
+                    onLikeClick = { postId ->
+                        currentUser?.id?.toIntOrNull()?.let { userId ->
+                            postViewModel.toggleLike(postId, userId)
+                        }
+                    }
+                )
             }
         }
 
@@ -131,7 +163,6 @@ private fun calculateRoute(context: android.content.Context, mapViewModel: MapVi
     val userLocation = mapViewModel.uiState.value.userLocation
     
     if (userLocation != null) {
-        Log.d("PlaceDetail", "📍 Position de départ (via ViewModel): ${userLocation.latitude}, ${userLocation.longitude}")
         mapViewModel.calculateRoute(userLocation.latitude, userLocation.longitude, details.latitude, details.longitude, mode)
     } else {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
@@ -161,7 +192,12 @@ fun TransportOptionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun PlaceDetailsContent(details: PlaceDetails) {
+fun PlaceDetailsContent(
+    details: PlaceDetails,
+    posts: List<com.traveling.domain.model.Post>,
+    onPostClick: (String) -> Unit,
+    onLikeClick: (String) -> Unit
+) {
     val context = LocalContext.current
     
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).padding(bottom = 80.dp)) {
@@ -179,15 +215,11 @@ fun PlaceDetailsContent(details: PlaceDetails) {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Bouton Google Maps
         OutlinedButton(
             onClick = {
                 val gmmIntentUri = Uri.parse("geo:0,0?q=${details.latitude},${details.longitude}(${Uri.encode(details.name)})")
                 val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
-                // On essaie d'ouvrir l'application Google Maps spécifiquement
                 mapIntent.setPackage("com.google.android.apps.maps")
-                
-                // Si Google Maps n'est pas installé, on ouvre une application de cartes générique
                 if (mapIntent.resolveActivity(context.packageManager) == null) {
                     mapIntent.setPackage(null)
                 }
@@ -205,10 +237,37 @@ fun PlaceDetailsContent(details: PlaceDetails) {
 
         if (details.address != null) {
             val addr = listOfNotNull(details.address.housenumber, details.address.street, details.address.city).joinToString(" ")
-            InfoItem(icon = Icons.Default.LocationOn, text = addr)
+            if (addr.isNotBlank()) InfoItem(icon = Icons.Default.LocationOn, text = addr)
         }
         if (details.phone != null) InfoItem(icon = Icons.Default.Phone, text = details.phone)
         if (details.website != null) InfoItem(icon = Icons.Default.Language, text = details.website)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text("Posts sur ce lieu", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TravelingDeepPurple)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (posts.isEmpty()) {
+            Text("Aucun post pour le moment. Soyez le premier !", color = Color.Gray, fontSize = 14.sp)
+        } else {
+            posts.forEach { post ->
+                PostCard(
+                    title = post.content ?: post.title ?: "Sans titre",
+                    tags = post.tags?.map { it to TravelingTagBlue } ?: emptyList(),
+                    location = post.title ?: details.name,
+                    author = post.authorName ?: "Anonyme",
+                    authorProfileUrl = post.authorAvatar,
+                    imageUrl = post.fullImageUrl,
+                    likes = post.likes.toString(),
+                    comments = post.commentsCount.toString(),
+                    isLiked = post.isLiked,
+                    onLikeClick = { onLikeClick(post.id) },
+                    onClick = { onPostClick(post.id) },
+                    sharedItinerary = post.sharedItinerary
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
     }
 }
 
@@ -218,12 +277,5 @@ fun InfoItem(icon: ImageVector, text: String) {
         Icon(icon, contentDescription = null, tint = TravelingDeepPurple, modifier = Modifier.size(20.dp))
         Spacer(modifier = Modifier.width(8.dp))
         Text(text)
-    }
-}
-@Composable
-fun InfoSection(title: String, content: String) {
-    Column(modifier = Modifier.padding(vertical = 8.dp)) {
-        Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(text = content, style = MaterialTheme.typography.bodyMedium)
     }
 }

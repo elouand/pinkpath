@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.traveling.domain.model.Post
 import com.traveling.ui.common.PostCard
@@ -25,7 +26,7 @@ import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagBlue
 import com.traveling.ui.theme.TravelingTagYellow
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FeedScreen(
     onPostClick: (String) -> Unit,
@@ -47,18 +48,22 @@ fun FeedScreen(
     
     var selectedGroup by remember { mutableStateOf<String?>(initialGroupName) }
     
-    LaunchedEffect(userGroups) {
-        if (selectedGroup == null && userGroups.isNotEmpty() && initialGroupName == null) {
-            // selectedGroup = userGroups.first().name // Optional: don't auto-select if we want to show all
-        }
-    }
+    // Nouveau filtre : Tout, Posts, Itinéraires
+    var contentTypeFilter by remember { mutableStateOf("Tout") }
 
-    // Filtrage des posts selon l'onglet, le groupe sélectionné et la recherche
-    val filteredPosts = remember(posts, selectedTab, selectedGroup, searchQuery) {
+    // Filtrage des posts
+    val filteredPosts = remember(posts, selectedTab, selectedGroup, searchQuery, contentTypeFilter) {
         var result = if (selectedTab == "Populaires") {
             posts.filter { it.isPublic }
         } else {
             if (selectedGroup == null) posts else posts.filter { it.groupName == selectedGroup }
+        }
+
+        // Filtre par type de contenu
+        result = when (contentTypeFilter) {
+            "Posts" -> result.filter { it.itineraryId == null }
+            "Itinéraires" -> result.filter { it.itineraryId != null }
+            else -> result
         }
 
         if (searchQuery.isNotBlank()) {
@@ -107,13 +112,12 @@ fun FeedScreen(
             
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Selection Row
+            // Selection Row (Populaires / Groupes)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Populaires Tab
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = if (selectedTab == "Populaires") Color.White else Color.Transparent,
@@ -130,7 +134,6 @@ fun FeedScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Group Dropdown
                 Box {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
@@ -187,6 +190,29 @@ fun FeedScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Content Type Filter Chips
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+            ) {
+                listOf("Tout", "Posts", "Itinéraires").forEach { type ->
+                    FilterChip(
+                        selected = contentTypeFilter == type,
+                        onClick = { contentTypeFilter = type },
+                        label = { Text(type) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = TravelingTagYellow,
+                            selectedLabelColor = TravelingDeepPurple,
+                            labelColor = Color.Gray
+                        ),
+                        border = null,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
             PullToRefreshBox(
@@ -234,7 +260,8 @@ fun FeedScreen(
                                         viewModel.toggleLike(post.id, userId)
                                     }
                                 },
-                                onClick = { onPostClick(post.id) }
+                                onClick = { onPostClick(post.id) },
+                                sharedItinerary = post.sharedItinerary
                             )
                         }
                     }

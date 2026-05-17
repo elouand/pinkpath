@@ -3,6 +3,7 @@ package com.traveling.data.repository
 import com.traveling.data.remote.*
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.JoinRequest
 import com.traveling.domain.model.ShareItineraryRequest
 import com.traveling.domain.repository.PostRepository
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -145,9 +146,51 @@ class PostRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun shareItinerary(itineraryId: Int, userId: Int, description: String): Result<Unit> {
+    override suspend fun shareItinerary(itineraryId: Int, userId: Int, description: String, isPublic: Boolean, groupId: Int?): Result<Unit> {
         return try {
-            api.shareItinerary(itineraryId, ShareItineraryRequest(userId, description))
+            api.shareItinerary(itineraryId, ShareItineraryRequest(userId, description, isPublic, groupId))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getGroupDetails(groupId: Int): Result<Group> {
+        return try {
+            Result.success(api.getGroupDetails(groupId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getJoinRequests(groupId: Int): Result<List<JoinRequest>> {
+        return try {
+            Result.success(api.getJoinRequests(groupId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun respondToJoinRequest(groupId: Int, requestId: Int, accept: Boolean): Result<Unit> {
+        return try {
+            api.respondToJoinRequest(groupId, requestId, mapOf("action" to if (accept) "accept" else "reject"))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun searchGroups(query: String, userId: Int?): Result<List<Group>> {
+        return try {
+            Result.success(api.searchGroups(query, userId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun joinGroup(groupId: Int, userId: Int): Result<Unit> {
+        return try {
+            api.joinGroup(groupId, JoinGroupRequest(userId))
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

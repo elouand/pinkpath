@@ -30,7 +30,7 @@ const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 // --- CONFIGURATION ---
 // IMPORTANT : Remplace "0.0.0.0" ici par ton IP réelle (ex: 192.168.1.XX)
 // pour que ton téléphone puisse charger les images !
-const SERVER_IP = "192.168.1.113"//"192.168.1.25"; 
+const SERVER_IP = "192.168.1.187"//"192.168.1.25"; 
 const PORT = 3000;
 const BASE_URL = `http://${SERVER_IP}:${PORT}`;
 
@@ -258,25 +258,60 @@ app.get('/api/users/:userId/groups', async (req, res) => {
 });
 
 
-/** [GET] Récupérer les détails d'un groupe (Membres + Photos) */
+/** [GET] Récupérer les détails d'un groupe (Membres avec rôles + Photos/Itinéraires) */
+/** [GET] Récupérer les détails d'un groupe (Membres avec rôles + Flux du groupe) */
+/** [GET] Récupérer les détails d'un groupe (Membres + Flux + Previews) */
+// =============================================================
+// 1. RECHERCHE GLOBALE (DOIT ÊTRE AVANT :groupId)
+// =============================================================
+app.get('/api/groups/search', async (req, res) => {    const { query, userId } = req.query; // Le userId est maintenant envoyé par l'app
+    if (!query) return res.json([]);
+
+    try {
+        const groups = await prisma.group.findMany({
+            where: { name: { contains: query, mode: 'insensitive' } },
+            include: {
+                _count: { select: { members: true, photos: true } },
+                // VÉRIFICATION DES DEMANDES EN ATTENTE
+                joinRequests: userId ? { where: { userId: parseInt(userId) } } : false,
+                members: userId ? { where: { userId: parseInt(userId) } } : false
+            }
+        });
+
+        res.json(groups.map(g => ({
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            imageUrl: g.imageUrl ? `${BASE_URL}${g.imageUrl}` : null,
+            isPublic: g.isPublic,
+            // CES DEUX LIGNES SONT CRITIQUES POUR L'APP
+            isPending: g.joinRequests?.length > 0, 
+            userRole: g.members?.[0]?.role || null,
+            count: { users: g._count.members, photos: g._count.photos, paths: 0 }
+        })));
+    } catch (e) { res.status(500).json({ error: "Erreur" }); }
+});
+
+// =============================================================
+// 2. DÉTAILS D'UN GROUPE
+// =============================================================
 app.get('/api/groups/:groupId', async (req, res) => {
     try {
         const { groupId } = req.params;
+        const userId = req.query.userId ? parseInt(req.query.userId) : null; // <-- Ajout pour les Likes
+        const idInt = parseInt(groupId);
+        if (isNaN(idInt)) return res.status(400).json({ error: "ID invalide" });
+
         const group = await prisma.group.findUnique({
-            where: { id: parseInt(groupId) },
+            where: { id: idInt },
             include: {
-                users: {
-                    select: {
-                        id: true,
-                        username: true,
-                        pseudo: true,
-                        profileUrl: true
-                    }
-                },
+                members: { include: { user: { select: { id: true, username: true, pseudo: true, profileUrl: true } } } },
                 photos: {
                     include: {
                         author: true,
-                        tags: true,
+                        tags: true, // <-- Inclus pour les badges de l'app
+                        likedBy: userId ? { where: { userId: userId } } : false, // <-- Pour le coeur rouge
+                        itinerary: { include: { steps: { orderBy: { order: 'asc' } } } },
                         _count: { select: { comments: true } }
                     },
                     orderBy: { date: 'desc' }
@@ -286,44 +321,128 @@ app.get('/api/groups/:groupId', async (req, res) => {
 
         if (!group) return res.status(404).json({ error: "Groupe non trouvé" });
 
-        // Formatage pour l'URL des images
-        const formattedPhotos = group.photos.map(p => ({
-            ...p,
-            imageUrl: `${BASE_URL}${p.url}`,
-            authorAvatarUrl: p.author?.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null
-        }));
-
         res.json({
-            ...group,
-            photos: formattedPhotos
+            id: group.id,
+            name: group.name,
+            description: group.description,
+            imageUrl: group.imageUrl ? `${BASE_URL}${group.imageUrl}` : null,
+            isPublic: group.isPublic,
+            users: group.members.map(m => ({
+                id: m.user.id.toString(),
+                username: m.user.username,
+                pseudo: m.user.pseudo,
+                profileUrl: m.user.profileUrl ? `${BASE_URL}${m.user.profileUrl}` : null,
+                role: m.role
+            })),
+            photos: group.photos.map(p => ({
+                id: p.id.toString(),
+                title: p.type_lieu,
+                content: p.description,
+                imageUrl: p.url ? `${BASE_URL}${p.url}` : null,
+                audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null, // <-- Ajouté !
+                date: p.date, // <-- Ajouté !
+                author: p.author?.pseudo || p.author?.username || "Anonyme",
+                authorAvatarUrl: p.author?.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
+                likes: p.likesCount || 0,
+                isLiked: p.likedBy && p.likedBy.length > 0, // <-- Ajouté !
+                commentCount: p._count?.comments || 0,
+                tags: p.tags.map(t => t.name), // <-- Ajouté !
+                sharedItinerary: p.itinerary ? {
+                    id: p.itinerary.id,
+                    name: p.itinerary.name,
+                    duration: p.itinerary.duration,
+                    distance: p.itinerary.distance,
+                    mode: p.itinerary.mode,
+                    steps: p.itinerary.steps
+                } : null
+            }))
         });
     } catch (error) {
+        console.error("💥 Erreur détails :", error);
         res.status(500).json({ error: "Erreur serveur" });
     }
 });
 
+// =============================================================
+// 3. ACTIONS (REJOINDRRE / DEMANDES / AJOUT)
+// =============================================================
 
+/** Rejoindre ou demander à rejoindre */
+app.post('/api/groups/:groupId/join', async (req, res) => {
+    const { groupId } = req.params;
+    const { userId } = req.body;
+    try {
+        const group = await prisma.group.findUnique({ where: { id: parseInt(groupId) } });
+        const existing = await prisma.groupMember.findUnique({
+            where: { userId_groupId: { userId: parseInt(userId), groupId: parseInt(groupId) } }
+        });
+        if (existing) return res.status(400).json({ error: "Déjà membre" });
 
-/** [POST] Ajouter un utilisateur à un groupe existant (via son pseudo) */
+        if (group.isPublic) {
+            await prisma.groupMember.create({
+                data: { userId: parseInt(userId), groupId: parseInt(groupId), role: 'MEMBER' }
+            });
+            res.json({ message: "Groupe rejoint !" });
+        } else {
+            await prisma.joinRequest.create({ data: { userId: parseInt(userId), groupId: parseInt(groupId) } });
+            res.json({ message: "Demande envoyée !" });
+        }
+    } catch (e) { res.status(400).json({ error: "Action impossible" }); }
+});
+
+/** [GET] Voir les demandes pour un groupe */
+app.get('/api/groups/:groupId/requests', async (req, res) => {
+    try {
+        const requests = await prisma.joinRequest.findMany({
+            where: { groupId: parseInt(req.params.groupId) },
+            include: { user: true }
+        });
+        res.json(requests.map(r => ({
+            id: r.id,
+            userId: r.userId,
+            username: r.user.pseudo || r.user.username,
+            userAvatar: r.user.profileUrl ? `${BASE_URL}${r.user.profileUrl}` : null,
+            createdAt: r.createdAt
+        })));
+    } catch (e) { res.status(500).json({ error: "Erreur" }); }
+});
+
+/** [POST] Répondre à une demande */
+app.post('/api/groups/:groupId/requests/:requestId/respond', async (req, res) => {
+    const { groupId, requestId } = req.params;
+    const { action } = req.body; 
+
+    try {
+        const request = await prisma.joinRequest.findUnique({ where: { id: parseInt(requestId) } });
+        if (!request) return res.status(404).json({ error: "Demande introuvable" });
+
+        if (action === 'accept') {
+            await prisma.groupMember.create({
+                data: { userId: request.userId, groupId: parseInt(groupId), role: 'MEMBER' }
+            });
+        }
+        await prisma.joinRequest.delete({ where: { id: parseInt(requestId) } });
+        res.json({ message: "Ok" });
+    } catch (e) { res.status(500).json({ error: "Erreur" }); }
+});
+/** [POST] Ajouter un utilisateur à un groupe via son pseudo */
 app.post('/api/groups/:groupId/add-user', async (req, res) => {
     try {
         const { groupId } = req.params;
         const { usernameToAdd } = req.body;
 
-        const updatedGroup = await prisma.group.update({
-            where: { id: parseInt(groupId) },
+        await prisma.groupMember.create({
             data: {
-                users: {
-                    connect: { username: usernameToAdd }
-                }
-            },
-            include: { users: true }
+                group: { connect: { id: parseInt(groupId) } },
+                user: { connect: { username: usernameToAdd } },
+                role: 'MEMBER'
+            }
         });
 
-        res.json({ message: `${usernameToAdd} a rejoint le groupe !`, group: updatedGroup });
+        res.json({ message: `${usernameToAdd} a été ajouté au groupe !` });
     } catch (error) {
         console.error("💥 Erreur ajout membre :", error);
-        res.status(404).json({ error: "Utilisateur ou groupe introuvable" });
+        res.status(404).json({ error: "Utilisateur introuvable ou déjà dans le groupe" });
     }
 });
 
@@ -1330,41 +1449,57 @@ app.get('/api/route/multi', async (req, res) => {
  * [POST] /api/itineraries/:id/share
  * Crée un post public lié à cet itinéraire
  * Body: { userId, description }
+ *//**
+ * [POST] /api/itineraries/:id/share
+ * Crée un post lié à cet itinéraire (Public ou pour un Groupe)
  */
 app.post('/api/itineraries/:id/share', async (req, res) => {
     try {
         const { id } = req.params;
-        const { userId, description } = req.body;
+        // On récupère isPublic et groupId envoyés par l'app
+        const { userId, description, isPublic, groupId } = req.body;
+        
         if (!userId) return res.status(400).json({ error: "userId requis" });
 
         const itinerary = await prisma.itinerary.findUnique({
             where: { id: parseInt(id) },
             include: { steps: { orderBy: { order: 'asc' } } }
         });
+        
         if (!itinerary) return res.status(404).json({ error: "Itinéraire non trouvé" });
 
         const firstStep = itinerary.steps[0];
+        
+        // Création du post (photo) lié à l'itinéraire
         const photo = await prisma.photo.create({
             data: {
-                url: '',
+                url: '', // Pas d'image physique, le client affichera la preview de l'itinéraire
                 description: description || `Itinéraire : ${itinerary.name}`,
                 type_lieu: itinerary.name,
                 latitude: firstStep?.latitude || 0,
                 longitude: firstStep?.longitude || 0,
-                is_public: true,
+                // Utilisation des nouvelles valeurs
+                is_public: isPublic === undefined ? true : isPublic, 
+                groupId: groupId ? parseInt(groupId) : null,
                 authorId: parseInt(userId),
                 itineraryId: parseInt(id),
                 likesCount: 0
             },
-            include: { author: true, itinerary: { include: { steps: { orderBy: { order: 'asc' } } } } }
+            include: { 
+                author: true, 
+                itinerary: { include: { steps: { orderBy: { order: 'asc' } } } } 
+            }
         });
 
-        console.log(`📤 Itinéraire "${itinerary.name}" partagé par user ${userId}`);
+        console.log(`📤 Itinéraire "${itinerary.name}" partagé (Public: ${photo.is_public}, Group: ${photo.groupId})`);
+        
         res.status(201).json({
             id: photo.id.toString(),
             title: photo.type_lieu,
             content: photo.description,
             itineraryId: photo.itineraryId,
+            isPublic: photo.is_public,
+            groupName: photo.group?.name || null,
             sharedItinerary: photo.itinerary ? {
                 id: photo.itinerary.id,
                 name: photo.itinerary.name,
@@ -1382,7 +1517,6 @@ app.post('/api/itineraries/:id/share', async (req, res) => {
         res.status(500).json({ error: "Erreur serveur" });
     }
 });
-
 /**
  * [POST] /api/itineraries/:id/copy
  * Copie un itinéraire dans la liste de l'utilisateur

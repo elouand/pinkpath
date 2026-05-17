@@ -3,6 +3,7 @@ package com.traveling.data.remote
 import com.google.gson.annotations.SerializedName
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.JoinRequest
 import com.traveling.domain.model.ShareItineraryRequest
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -30,6 +31,10 @@ data class CommentResponse(
 
 data class AddUserToGroupRequest(
     val usernameToAdd: String
+)
+
+data class JoinGroupRequest(
+    val userId: Int
 )
 
 interface PostApi {
@@ -71,4 +76,26 @@ interface PostApi {
         @Path("id") id: Int,
         @Body request: ShareItineraryRequest
     ): Post
+
+    @GET("groups/{groupId}")
+    suspend fun getGroupDetails(@Path("groupId") groupId: Int): Group
+
+    @GET("groups/{groupId}/requests")
+    suspend fun getJoinRequests(@Path("groupId") groupId: Int): List<JoinRequest>
+
+    @POST("groups/{groupId}/requests/{requestId}/respond")
+    suspend fun respondToJoinRequest(
+        @Path("groupId") groupId: Int,
+        @Path("requestId") requestId: Int,
+        @Body body: Map<String, String>
+    ): Map<String, Any>
+
+    @GET("groups/search")
+    suspend fun searchGroups(
+        @Query("query") query: String,
+        @Query("userId") userId: Int? = null
+    ): List<Group>
+
+    @POST("groups/{groupId}/join")
+    suspend fun joinGroup(@Path("groupId") groupId: Int, @Body request: JoinGroupRequest): Map<String, Any>
 }

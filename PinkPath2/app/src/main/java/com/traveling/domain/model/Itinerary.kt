@@ -92,5 +92,11 @@ data class UpdateItineraryRequest(
     val steps: List<UpdateStepRequest>
 )
 
-data class ShareItineraryRequest(val userId: Int, val description: String)
+data class ShareItineraryRequest(
+    val userId: Int,
+    val description: String,
+    val isPublic: Boolean = true,
+    val groupId: Int? = null
+)
+
 data class CopyItineraryRequest(val userId: Int)

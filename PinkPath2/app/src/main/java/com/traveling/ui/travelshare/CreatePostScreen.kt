@@ -25,7 +25,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -114,10 +113,13 @@ fun CreatePostScreen(
     LaunchedEffect(locationQuery) {
         if (locationQuery.length > 2 && selectedLocation?.properties?.name != locationQuery) {
             delay(500)
-            viewModel.searchLocation(locationQuery).onSuccess { list ->
+            val result = viewModel.searchLocation(locationQuery)
+            result.getOrNull()?.let { list ->
                 suggestions = list.filter { !it.properties.name.isNullOrBlank() }
             }
-        } else if (locationQuery.length <= 2) suggestions = emptyList()
+        } else if (locationQuery.length <= 2) {
+            suggestions = emptyList()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -130,21 +132,46 @@ fun CreatePostScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp).verticalScroll(rememberScrollState()),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Ajouter un post", style = MaterialTheme.typography.displayMedium, color = TravelingDeepPurple, modifier = Modifier.padding(vertical = 16.dp))
+        Text(
+            text = "Ajouter un post",
+            style = MaterialTheme.typography.displayMedium,
+            color = TravelingDeepPurple,
+            modifier = Modifier.padding(vertical = 16.dp)
+        )
 
         // Image selection
         Surface(
             shape = RoundedCornerShape(32.dp),
             color = TravelingDeepPurple.copy(alpha = 0.1f),
-            modifier = Modifier.size(200.dp).clickable { imageLauncher.launch("image/*") }
+            modifier = Modifier
+                .size(200.dp)
+                .clickable { imageLauncher.launch("image/*") }
         ) {
             if (imageUri != null) {
-                AsyncImage(model = imageUri, contentDescription = null, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(32.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                AsyncImage(
+                    model = imageUri,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(32.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
             } else {
-                Icon(Icons.Default.AddPhotoAlternate, null, tint = TravelingDeepPurple, modifier = Modifier.size(60.dp).padding(60.dp))
+                Icon(
+                    imageVector = Icons.Default.AddPhotoAlternate,
+                    contentDescription = null,
+                    tint = TravelingDeepPurple,
+                    modifier = Modifier
+                        .size(60.dp)
+                        .padding(60.dp)
+                )
             }
         }
 
@@ -155,54 +182,82 @@ fun CreatePostScreen(
             title = if (isRecording) "Enregistrement..." else if (audioFile != null) "Changer audio" else "Ajouter note audio",
             icon = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
             color = if (isRecording) Color.Red else TravelingDeepPurple,
-            modifier = Modifier.fillMaxWidth().clickable {
-                if (isRecording) {
-                    try {
-                        mediaRecorder?.apply { stop(); release() }
-                        mediaRecorder = null
-                        isRecording = false
-                    } catch (e: Exception) {
-                        mediaRecorder = null
-                        isRecording = false
-                    }
-                } else {
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    } else {
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (isRecording) {
                         try {
-                            val file = File(context.cacheDir, "post_audio_${System.currentTimeMillis()}.m4a")
-                            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
-                            recorder.apply {
-                                setAudioSource(MediaRecorder.AudioSource.MIC)
-                                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                                setOutputFile(file.absolutePath)
-                                prepare()
-                                start()
+                            mediaRecorder?.apply {
+                                stop()
+                                release()
                             }
-                            audioFile = file
-                            mediaRecorder = recorder
-                            isRecording = true
+                            mediaRecorder = null
+                            isRecording = false
                         } catch (e: Exception) {
-                            Toast.makeText(context, "Impossible d'utiliser le micro", Toast.LENGTH_SHORT).show()
+                            mediaRecorder = null
+                            isRecording = false
+                        }
+                    } else {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        } else {
+                            try {
+                                val file = File(context.cacheDir, "post_audio_${System.currentTimeMillis()}.m4a")
+                                val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    MediaRecorder(context)
+                                } else {
+                                    MediaRecorder()
+                                }
+                                recorder.apply {
+                                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                                    setOutputFile(file.absolutePath)
+                                    prepare()
+                                    start()
+                                }
+                                audioFile = file
+                                mediaRecorder = recorder
+                                isRecording = true
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Impossible d'utiliser le micro", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 }
-            }
         )
 
         Spacer(modifier = Modifier.height(24.dp))
 
         // Group selection
         Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { groupDropdownExpanded = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+            OutlinedButton(
+                onClick = { groupDropdownExpanded = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
                 Text(if (selectedGroup == null) "🌍 Destination : Public" else "👥 Groupe : ${selectedGroup!!.name}")
                 Icon(Icons.Default.ArrowDropDown, null)
             }
-            DropdownMenu(expanded = groupDropdownExpanded, onDismissRequest = { groupDropdownExpanded = false }) {
-                DropdownMenuItem(text = { Text("🌍 Public") }, onClick = { selectedGroup = null; groupDropdownExpanded = false })
+            DropdownMenu(
+                expanded = groupDropdownExpanded,
+                onDismissRequest = { groupDropdownExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("🌍 Public") },
+                    onClick = {
+                        selectedGroup = null
+                        groupDropdownExpanded = false
+                    }
+                )
                 userGroups.forEach { group ->
-                    DropdownMenuItem(text = { Text("👥 ${group.name}") }, onClick = { selectedGroup = group; groupDropdownExpanded = false })
+                    DropdownMenuItem(
+                        text = { Text("👥 ${group.name}") },
+                        onClick = {
+                            selectedGroup = group
+                            groupDropdownExpanded = false
+                        }
+                    )
                 }
             }
         }
@@ -235,7 +290,7 @@ fun CreatePostScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Tags Preview (ABOVE the input)
+        // Tags Preview
         FlowRow(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -264,7 +319,9 @@ fun CreatePostScreen(
                         selectedTags.add(trimmed)
                         tagInput = ""
                     }
-                }) { Icon(Icons.Default.Add, null) }
+                }) {
+                    Icon(Icons.Default.Add, null)
+                }
             }
         )
 
@@ -275,8 +332,13 @@ fun CreatePostScreen(
             value = description,
             onValueChange = { description = it },
             label = { Text("Description") },
-            modifier = Modifier.fillMaxWidth().height(120.dp),
-            colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent)
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent
+            )
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -308,16 +370,17 @@ fun CreatePostScreen(
                         Toast.makeText(context, "Image et lieu requis", Toast.LENGTH_SHORT).show()
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
                 shape = RoundedCornerShape(28.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple)
             ) {
-                Text("Publier", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(8.dp))
                 Icon(Icons.AutoMirrored.Filled.Send, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Publier", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
-        Spacer(Modifier.height(32.dp))
     }
 }
 
@@ -338,7 +401,7 @@ fun CreateOptionBox(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, null, tint = color)
+            Icon(icon, null, tint = color, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(12.dp))
             Text(title, color = color, fontWeight = FontWeight.Medium)
         }

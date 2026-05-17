@@ -8,8 +8,11 @@ import com.traveling.data.remote.PhotonApi
 import com.traveling.data.remote.PhotonFeature
 import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
+import com.traveling.domain.model.JoinRequest
 import com.traveling.domain.repository.PostRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +45,20 @@ class PostViewModel @Inject constructor(
 
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
     val groups: StateFlow<List<Group>> = _groups
+    
+    private val _selectedGroup = MutableStateFlow<Group?>(null)
+    val selectedGroup: StateFlow<Group?> = _selectedGroup
+
+    private val _joinRequests = MutableStateFlow<List<JoinRequest>>(emptyList())
+    val joinRequests: StateFlow<List<JoinRequest>> = _joinRequests
+
+    private val _searchResults = MutableStateFlow<List<Group>>(emptyList())
+    val searchResults: StateFlow<List<Group>> = _searchResults
+
+    private val _toastMessage = MutableStateFlow<String?>(null)
+    val toastMessage = _toastMessage.asStateFlow()
+
+    private var searchJob: Job? = null
 
     init {
         loadPosts()
@@ -55,9 +72,7 @@ class PostViewModel @Inject constructor(
             repository.getPosts(userId).onSuccess {
                 _posts.value = it
                 _error.value = null
-            }.onFailure {
-                handleError(it, "chargement")
-            }
+            }.onFailure { handleError(it, "chargement") }
             _isLoading.value = false
         }
     }
@@ -67,18 +82,91 @@ class PostViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getUserGroups(userId).onSuccess {
                 _groups.value = it
-            }.onFailure {
-                handleError(it, "récupération groupes")
             }
         }
     }
 
-    suspend fun searchLocation(query: String): Result<List<PhotonFeature>> {
-        return try {
-            val response = photonApi.search(query)
-            Result.success(response.features)
-        } catch (e: Exception) {
-            Result.failure(e)
+    fun loadGroupDetails(groupId: Int) {
+        val currentUserId = sessionManager.getUserId()
+        viewModelScope.launch {
+            _isLoading.value = true
+            repository.getGroupDetails(groupId).onSuccess { group ->
+                _selectedGroup.value = group
+                val isAdmin = group.users?.any { it.id == currentUserId && it.role == "ADMIN" } == true
+                if (isAdmin && !group.isPublic) {
+                    loadJoinRequests(groupId)
+                }
+            }.onFailure { handleError(it, "détails groupe") }
+            _isLoading.value = false
+        }
+    }
+
+    fun loadJoinRequests(groupId: Int) {
+        viewModelScope.launch {
+            repository.getJoinRequests(groupId).onSuccess {
+                _joinRequests.value = it
+            }
+        }
+    }
+
+    fun respondToRequest(groupId: Int, requestId: Int, accept: Boolean) {
+        viewModelScope.launch {
+            repository.respondToJoinRequest(groupId, requestId, accept).onSuccess {
+                _toastMessage.value = if (accept) "Membre accepté !" else "Demande refusée"
+                loadJoinRequests(groupId)
+                loadGroupDetails(groupId)
+            }
+        }
+    }
+
+    fun searchGroups(query: String) {
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _searchResults.value = emptyList()
+            return
+        }
+        val userId = sessionManager.getUserId()?.toIntOrNull()
+        searchJob = viewModelScope.launch {
+            _isLoading.value = true
+            delay(300)
+            repository.searchGroups(query, userId).onSuccess {
+                _searchResults.value = it
+            }
+            _isLoading.value = false
+        }
+    }
+
+    fun joinGroup(groupId: Int) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            _isLoading.value = true
+            repository.joinGroup(groupId, userId).onSuccess {
+                _toastMessage.value = "Demande envoyée avec succès !"
+                _searchResults.value = _searchResults.value.map { 
+                    if (it.id == groupId) it.copy(isPending = true) else it 
+                }
+            }.onFailure { handleError(it, "rejoindre") }
+            _isLoading.value = false
+        }
+    }
+
+    fun createGroup(
+        name: String,
+        description: String? = null,
+        isPrivate: Boolean = false,
+        image: File? = null
+    ) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            repository.createGroup(name, userId, description, isPrivate, image).onSuccess {
+                loadUserGroups()
+                _uploadSuccess.value = true
+            }.onFailure {
+                handleError(it, "création groupe")
+            }
+            _isLoading.value = false
         }
     }
 
@@ -109,23 +197,12 @@ class PostViewModel @Inject constructor(
         }
     }
 
-    fun createGroup(
-        name: String,
-        description: String? = null,
-        isPrivate: Boolean = false,
-        image: File? = null
-    ) {
-        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-            repository.createGroup(name, userId, description, isPrivate, image).onSuccess {
-                loadUserGroups()
-                _uploadSuccess.value = true
-            }.onFailure {
-                handleError(it, "création groupe")
-            }
-            _isLoading.value = false
+    suspend fun searchLocation(query: String): Result<List<PhotonFeature>> {
+        return try {
+            val response = photonApi.search(query)
+            Result.success(response.features)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -133,7 +210,7 @@ class PostViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             repository.addUserToGroup(groupId, username).onSuccess {
-                loadUserGroups()
+                loadGroupDetails(groupId)
             }.onFailure {
                 handleError(it, "ajout membre")
             }
@@ -190,28 +267,22 @@ class PostViewModel @Inject constructor(
         }
     }
 
+    fun clearToast() { _toastMessage.value = null }
+
     private fun handleError(t: Throwable, action: String) {
-        val message = when (t) {
-            is HttpException -> "Erreur $action (HTTP ${t.code()})"
-            else -> "Erreur lors de l'action $action: ${t.localizedMessage}"
-        }
-        _error.value = message
-    }
-    
-    fun resetUploadStatus() {
-        _uploadSuccess.value = false
+        _error.value = "Erreur $action: ${t.localizedMessage}"
     }
 
-    fun clearError() {
-        _error.value = null
-    }
+    fun resetUploadStatus() { _uploadSuccess.value = false }
+
+    fun clearError() { _error.value = null }
 
     private val _shareSuccess = MutableStateFlow(false)
     val shareSuccess = _shareSuccess.asStateFlow()
 
-    fun shareItinerary(itineraryId: Int, userId: Int, description: String) {
+    fun shareItinerary(itineraryId: Int, userId: Int, description: String, isPublic: Boolean = true, groupId: Int? = null) {
         viewModelScope.launch {
-            repository.shareItinerary(itineraryId, userId, description)
+            repository.shareItinerary(itineraryId, userId, description, isPublic, groupId)
                 .onSuccess { _shareSuccess.value = true }
                 .onFailure { handleError(it, "partage itinéraire") }
         }

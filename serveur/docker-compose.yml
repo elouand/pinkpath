@@ -1,15 +1,17 @@
+version: '3.8'
+
 services:
   db:
-    image: postgis/postgis:15-3.3 # Image incluant Postgres + l'extension spatiale
+    image: postgis/postgis:15-3.3 # L'image exacte de ton projet
     container_name: traveling_db_container
-    ports:
-      - "5432:5432" # Port par défaut de Postgres
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=password123
-      - POSTGRES_DB=traveling_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: traveling_db
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data: # Pour que tes données ne s'effacent pas au redémarrage
+  postgres_data:
