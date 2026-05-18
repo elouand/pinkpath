@@ -30,7 +30,7 @@ const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 // --- CONFIGURATION ---
 // IMPORTANT : Remplace "0.0.0.0" ici par ton IP réelle (ex: 192.168.1.XX)
 // pour que ton téléphone puisse charger les images !
-const SERVER_IP = "192.168.1.113"//"192.168.1.25"; 
+const SERVER_IP = "192.168.1.187"//"192.168.1.25"; 
 const PORT = 3000;
 const BASE_URL = `http://${SERVER_IP}:${PORT}`;
 
