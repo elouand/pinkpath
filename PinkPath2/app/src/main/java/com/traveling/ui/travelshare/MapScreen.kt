@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
@@ -86,7 +87,9 @@ fun MapScreen(
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
-            onMapClick = { 
+            properties = MapProperties(mapType = MapType.NORMAL, isTrafficEnabled = false),
+            uiSettings = MapUiSettings(zoomControlsEnabled = true, compassEnabled = true),
+            onMapClick = {
                 if (isSheetVisible) {
                     scope.launch {
                         sheetState.hide()
@@ -100,6 +103,20 @@ fun MapScreen(
                 Marker(
                     state = MarkerState(position = LatLng(post.latitude!!, post.longitude!!)),
                     title = post.title ?: "Post",
+                    onClick = {
+                        isSheetVisible = true
+                        false
+                    }
+                )
+            }
+
+            selectedLocation?.let { location ->
+                Marker(
+                    state = MarkerState(
+                        position = LatLng(location.geometry.latitude, location.geometry.longitude)
+                    ),
+                    title = location.properties.name ?: "Lieu recherché",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
                     onClick = {
                         isSheetVisible = true
                         false
@@ -157,9 +174,16 @@ fun MapScreen(
                 val lat = selectedLocation?.geometry?.latitude ?: 0.0
                 val lon = selectedLocation?.geometry?.longitude ?: 0.0
 
+                val nearbyPosts = posts.filter { post ->
+                    val pLat = post.latitude ?: return@filter false
+                    val pLon = post.longitude ?: return@filter false
+                    val dLat = pLat - lat
+                    val dLon = pLon - lon
+                    (dLat * dLat + dLon * dLon) < 0.01
+                }
                 LocationDetailContent(
                     locationName = locName,
-                    posts = posts.filter { it.title == locName },
+                    posts = nearbyPosts,
                     onViewPosts = { 
                         isSheetVisible = false
                         onNavigateToFeed(locName)

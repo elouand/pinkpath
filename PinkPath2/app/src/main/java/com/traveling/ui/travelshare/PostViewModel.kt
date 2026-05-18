@@ -43,6 +43,9 @@ class PostViewModel @Inject constructor(
     private val _posts = MutableStateFlow<List<Post>>(emptyList())
     val posts: StateFlow<List<Post>> = _posts
 
+    private val _followingPosts = MutableStateFlow<List<Post>>(emptyList())
+    val followingPosts: StateFlow<List<Post>> = _followingPosts
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
@@ -101,6 +104,18 @@ class PostViewModel @Inject constructor(
                 _posts.value = it
                 _error.value = null
             }.onFailure { handleError(it, "chargement") }
+            _isLoading.value = false
+        }
+    }
+
+    fun loadFollowingPosts() {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            _isLoading.value = true
+            repository.getFollowingPosts(userId).onSuccess {
+                _followingPosts.value = it
+                _error.value = null
+            }.onFailure { handleError(it, "abonnements") }
             _isLoading.value = false
         }
     }
@@ -249,26 +264,26 @@ class PostViewModel @Inject constructor(
     fun toggleLike(postId: String, userId: Int) {
         viewModelScope.launch {
             val currentPosts = _posts.value
-            _posts.value = currentPosts.map {
+            val currentFollowingPosts = _followingPosts.value
+
+            fun optimisticUpdate(list: List<Post>) = list.map {
                 if (it.id == postId) {
                     val newIsLiked = !it.isLiked
-                    val currentLikes = it.displayLikes
-                    val newLikes = if (newIsLiked) currentLikes + 1 else currentLikes - 1
-                    it.copy(isLiked = newIsLiked, likes = newLikes)
+                    it.copy(isLiked = newIsLiked, likes = if (newIsLiked) it.displayLikes + 1 else it.displayLikes - 1)
                 } else it
             }
+            _posts.value = optimisticUpdate(currentPosts)
+            _followingPosts.value = optimisticUpdate(currentFollowingPosts)
 
             repository.likePost(postId, userId).onSuccess { response ->
-                _posts.value = _posts.value.map {
-                    if (it.id == postId) {
-                        it.copy(
-                            likes = response.likes,
-                            isLiked = response.isLiked ?: it.isLiked
-                        )
-                    } else it
+                fun confirmUpdate(list: List<Post>) = list.map {
+                    if (it.id == postId) it.copy(likes = response.likes, isLiked = response.isLiked ?: it.isLiked) else it
                 }
+                _posts.value = confirmUpdate(_posts.value)
+                _followingPosts.value = confirmUpdate(_followingPosts.value)
             }.onFailure {
                 _posts.value = currentPosts
+                _followingPosts.value = currentFollowingPosts
                 handleError(it, "like")
             }
         }

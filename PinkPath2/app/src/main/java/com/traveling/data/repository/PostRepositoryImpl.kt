@@ -38,6 +38,12 @@ class PostRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun getFollowingPosts(userId: Int): Result<List<Post>> = try {
+        Result.success(api.getFollowingPosts(userId))
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     override suspend fun uploadPost(
         image: File,
         audio: File?,

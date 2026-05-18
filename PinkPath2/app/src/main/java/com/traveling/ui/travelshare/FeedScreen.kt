@@ -47,6 +47,7 @@ fun FeedScreen(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val posts by viewModel.posts.collectAsState()
+    val followingPosts by viewModel.followingPosts.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isLoggedIn by authViewModel.isLoggedIn.collectAsState()
     val currentUser by authViewModel.currentUser.collectAsState()
@@ -78,14 +79,13 @@ fun FeedScreen(
         }
     }
 
-    val filteredPosts = remember(posts, selectedTab, selectedGroup, activePostSearch, contentTypeFilter) {
-        var result = if (selectedTab == "Populaires") {
-            posts.filter { it.isPublic }
-        } else {
-            if (selectedGroup == null) posts else posts.filter { it.groupName == selectedGroup }
+    val filteredPosts = remember(posts, followingPosts, selectedTab, selectedGroup, activePostSearch, contentTypeFilter) {
+        var result = when (selectedTab) {
+            "Abonnements" -> followingPosts
+            "Group" -> if (selectedGroup == null) posts else posts.filter { it.groupName == selectedGroup }
+            else -> posts.filter { it.isPublic }
         }
 
-        // Filtre par type de contenu
         result = when (contentTypeFilter) {
             "Posts" -> result.filter { it.itineraryId == null }
             "Itinéraires" -> result.filter { it.itineraryId != null }
@@ -105,6 +105,10 @@ fun FeedScreen(
     LaunchedEffect(isLoggedIn) {
         viewModel.loadPosts()
         viewModel.loadUserGroups()
+    }
+
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == "Abonnements") viewModel.loadFollowingPosts()
     }
 
     Scaffold(
@@ -224,7 +228,7 @@ fun FeedScreen(
             
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Selection Row (Populaires / Groupes)
+            // Selection Row (Populaires / Abonnements / Groupes)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
@@ -237,22 +241,40 @@ fun FeedScreen(
                 ) {
                     Text(
                         text = "Populaires",
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleMedium,
                         color = TravelingDeepPurple,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+
+                if (isLoggedIn) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (selectedTab == "Abonnements") TravelingDeepPurple else Color.Transparent,
+                        modifier = Modifier.clickable { selectedTab = "Abonnements" }
+                    ) {
+                        Text(
+                            text = "Abonnements",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (selectedTab == "Abonnements") Color.White else TravelingDeepPurple,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
 
                 Box {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = if (selectedTab == "Group") TravelingDeepPurple else Color.Transparent,
-                        modifier = Modifier.clickable { 
+                        modifier = Modifier.clickable {
                             selectedTab = "Group"
-                            expanded = true 
+                            expanded = true
                         }
                     ) {
                         Row(
@@ -261,7 +283,7 @@ fun FeedScreen(
                         ) {
                             Text(
                                 text = selectedGroup ?: "Groupes",
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color = if (selectedTab == "Group") Color.White else TravelingDeepPurple,
                                 fontWeight = FontWeight.Bold
                             )
@@ -329,15 +351,21 @@ fun FeedScreen(
 
             PullToRefreshBox(
                 isRefreshing = isLoading,
-                onRefresh = { 
-                    viewModel.loadPosts()
-                    viewModel.loadUserGroups()
+                onRefresh = {
+                    when (selectedTab) {
+                        "Abonnements" -> viewModel.loadFollowingPosts()
+                        else -> { viewModel.loadPosts(); viewModel.loadUserGroups() }
+                    }
                 },
                 modifier = Modifier.weight(1f)
             ) {
                 if (filteredPosts.isEmpty() && !isLoading) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        val message = if (selectedTab == "Populaires") "Aucun post public" else "Aucun post dans ce groupe"
+                        val message = when (selectedTab) {
+                            "Abonnements" -> "Aucun post de vos abonnements"
+                            "Group" -> "Aucun post dans ce groupe"
+                            else -> "Aucun post public"
+                        }
                         Text(message, color = Color.Gray)
                     }
                 } else {

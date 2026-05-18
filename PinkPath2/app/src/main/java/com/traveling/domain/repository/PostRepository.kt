@@ -14,6 +14,7 @@ import java.io.File
 
 interface PostRepository {
     suspend fun getPosts(userId: Int? = null): Result<List<Post>>
+    suspend fun getFollowingPosts(userId: Int): Result<List<Post>>
     
     suspend fun uploadPost(
         image: File,

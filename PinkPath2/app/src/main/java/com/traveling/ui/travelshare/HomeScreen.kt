@@ -35,6 +35,7 @@ import com.traveling.ui.common.PostCard
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.theme.TravelingTagBlue
 import com.traveling.ui.travelpath.MapViewModel
+import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +52,26 @@ fun HomeScreen(
     val currentUser by authViewModel.currentUser.collectAsState()
     val mapState by mapViewModel.uiState.collectAsState()
     val context = LocalContext.current
+
+    val homePosts = remember(posts, mapState.userLocation) {
+        val publicPosts = posts.filter { it.isPublic }
+        val userLoc = mapState.userLocation
+        if (userLoc != null) {
+            val withCoords = publicPosts.filter { it.latitude != null && it.longitude != null }
+            val nearby = withCoords
+                .sortedBy { haversineKm(userLoc.latitude, userLoc.longitude, it.latitude!!, it.longitude!!) }
+                .take(5)
+            if (nearby.size >= 5) {
+                nearby
+            } else {
+                val nearbyIds = nearby.map { it.id }.toSet()
+                val filler = publicPosts.filter { it.id !in nearbyIds }.take(5 - nearby.size)
+                nearby + filler
+            }
+        } else {
+            publicPosts.take(5)
+        }
+    }
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
@@ -186,8 +207,9 @@ fun HomeScreen(
                         }
 
                         item {
+                            val label = if (mapState.userLocation != null) "Posts près de toi" else "Posts populaires"
                             Text(
-                                text = "Posts populaires",
+                                text = label,
                                 style = MaterialTheme.typography.displayMedium,
                                 color = TravelingDeepPurple,
                                 modifier = Modifier.fillMaxWidth(),
@@ -195,7 +217,7 @@ fun HomeScreen(
                             )
                         }
 
-                        if (posts.isEmpty() && !isLoading) {
+                        if (homePosts.isEmpty() && !isLoading) {
                             item {
                                 Box(
                                     modifier = Modifier.fillMaxWidth().padding(32.dp),
@@ -205,7 +227,7 @@ fun HomeScreen(
                                 }
                             }
                         } else {
-                            items(items = posts, key = { it.id }) { post ->
+                            items(items = homePosts, key = { it.id }) { post ->
                                 val tags = remember(post.tags) {
                                     post.tags?.map { it to TravelingTagBlue } ?: emptyList()
                                 }
@@ -237,6 +259,14 @@ fun HomeScreen(
             }
         }
     }
+}
+
+private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+    return r * 2 * asin(sqrt(a))
 }
 
 @Composable

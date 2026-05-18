@@ -149,7 +149,15 @@ app.get('/api/photos', async (req, res) => {
                 likedBy: userId ? { where: { userId: userId } } : false,
                 itinerary: { include: { steps: { orderBy: { order: 'asc' } } } }
             },
-            orderBy: { date: 'desc' }
+        });
+
+        const now = Date.now();
+        photos.sort((a, b) => {
+            const ageA = (now - new Date(a.date).getTime()) / 3600000;
+            const ageB = (now - new Date(b.date).getTime()) / 3600000;
+            const scoreA = (a.likesCount + 1) / Math.pow(ageA + 2, 1.5);
+            const scoreB = (b.likesCount + 1) / Math.pow(ageB + 2, 1.5);
+            return scoreB - scoreA;
         });
 
         const formattedPosts = photos.map(p => ({
@@ -190,6 +198,73 @@ app.get('/api/photos', async (req, res) => {
 });
 
 
+
+/** [GET] Flux des abonnements */
+app.get('/api/photos/following', async (req, res) => {
+    const userId = req.query.userId ? parseInt(req.query.userId) : null;
+    if (!userId) return res.status(400).json({ error: "userId requis" });
+
+    try {
+        const follows = await prisma.follow.findMany({
+            where: { followerId: userId },
+            select: { followingId: true }
+        });
+        const followingIds = follows.map(f => f.followingId);
+
+        if (followingIds.length === 0) return res.json([]);
+
+        const photos = await prisma.photo.findMany({
+            where: {
+                authorId: { in: followingIds },
+                is_public: true
+            },
+            include: {
+                author: true,
+                tags: true,
+                group: true,
+                _count: { select: { comments: true } },
+                likedBy: { where: { userId } },
+                itinerary: { include: { steps: { orderBy: { order: 'asc' } } } }
+            },
+            orderBy: { date: 'desc' }
+        });
+
+        const formattedPosts = photos.map(p => ({
+            id: p.id.toString(),
+            title: p.type_lieu,
+            content: p.description,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            imageUrl: p.url ? `${BASE_URL}${p.url}` : null,
+            audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null,
+            author: p.author ? (p.author.pseudo || p.author.username) : "Anonyme",
+            authorAvatarUrl: p.author && p.author.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
+            likes: p.likesCount || 0,
+            commentCount: p._count ? p._count.comments : 0,
+            isLiked: p.likedBy && p.likedBy.length > 0,
+            tags: p.tags.map(t => t.name),
+            groupName: p.group ? p.group.name : null,
+            isPublic: p.is_public,
+            itineraryId: p.itineraryId || null,
+            sharedItinerary: p.itinerary ? {
+                id: p.itinerary.id,
+                name: p.itinerary.name,
+                duration: p.itinerary.duration,
+                distance: p.itinerary.distance,
+                mode: p.itinerary.mode,
+                steps: p.itinerary.steps.map(s => ({
+                    id: s.id, order: s.order, name: s.name,
+                    type: s.type, latitude: s.latitude, longitude: s.longitude
+                }))
+            } : null
+        }));
+
+        res.json(formattedPosts);
+    } catch (error) {
+        console.error("Erreur feed abonnements:", error);
+        res.status(500).json({ error: "Erreur serveur" });
+    }
+});
 
 /** [POST] Créer un nouveau groupe et y ajouter le créateur */
 app.post('/api/groups', upload.single('groupImage'), async (req, res) => {

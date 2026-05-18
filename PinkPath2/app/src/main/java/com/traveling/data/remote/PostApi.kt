@@ -54,6 +54,9 @@ interface PostApi {
     @GET("photos")
     suspend fun getPosts(@Query("userId") userId: Int? = null): List<Post>
 
+    @GET("photos/following")
+    suspend fun getFollowingPosts(@Query("userId") userId: Int): List<Post>
+
     @POST("photos")
     suspend fun uploadPhoto(@Body body: RequestBody): ResponseBody
 
