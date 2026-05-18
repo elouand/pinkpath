@@ -40,6 +40,7 @@ import com.traveling.ui.travelpath.ItineraryViewModel
 fun PostDetailScreen(
     postId: String,
     onBack: () -> Unit,
+    onUserClick: (Int) -> Unit = {},
     viewModel: PostViewModel = hiltViewModel(),
     authViewModel: AuthViewModel = hiltViewModel(),
     itineraryViewModel: ItineraryViewModel = hiltViewModel()
@@ -136,7 +137,10 @@ fun PostDetailScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Localisation et Auteur
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = if (post.authorId != null) Modifier.clickable { onUserClick(post.authorId) } else Modifier
+                ) {
                     if (post.authorAvatar != null) {
                         AsyncImage(
                             model = post.authorAvatar,

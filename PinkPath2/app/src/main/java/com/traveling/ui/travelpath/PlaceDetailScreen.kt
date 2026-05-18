@@ -52,7 +52,8 @@ fun PlaceDetailScreen(
     authViewModel: AuthViewModel = hiltViewModel(),
     onBack: () -> Unit,
     onCreatePostClick: (String, Double, Double) -> Unit,
-    onPostClick: (String) -> Unit
+    onPostClick: (String) -> Unit,
+    onUserClick: (Int) -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
     val mapState by mapViewModel.uiState.collectAsState()
@@ -446,7 +447,8 @@ fun PlaceDetailsContent(
                         isLiked = post.isLiked,
                         onLikeClick = { onLikeClick(post.id) },
                         onClick = { onPostClick(post.id) },
-                        sharedItinerary = post.sharedItinerary
+                        sharedItinerary = post.sharedItinerary,
+                        onAuthorClick = post.authorId?.let { { onUserClick(it) } }
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                 }

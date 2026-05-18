@@ -61,6 +61,8 @@ data class Post(
     @SerializedName("authorAvatarUrl")
     val authorAvatar: String? = null,
 
+    val authorId: Int? = null,
+
     val likes: Int = 0,
 
     @SerializedName("commentCount")

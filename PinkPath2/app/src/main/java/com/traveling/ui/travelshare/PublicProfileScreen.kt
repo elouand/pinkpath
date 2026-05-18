@@ -31,6 +31,7 @@ fun PublicProfileScreen(
     userId: Int,
     onBack: () -> Unit,
     onPostClick: (String) -> Unit,
+    onUserClick: (Int) -> Unit = {},
     viewModel: PostViewModel = hiltViewModel(),
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
@@ -216,7 +217,8 @@ fun PublicProfileScreen(
                                 },
                                 onClick = { onPostClick(post.id) },
                                 sharedItinerary = post.sharedItinerary,
-                                onReportClick = { viewModel.reportPost(post.id) }
+                                onReportClick = { viewModel.reportPost(post.id) },
+                                onAuthorClick = post.authorId?.let { { onUserClick(it) } }
                             )
                         }
                     }

@@ -402,7 +402,8 @@ fun FeedScreen(
                                 },
                                 onClick = { onPostClick(post.id) },
                                 sharedItinerary = post.sharedItinerary,
-                                onReportClick = { viewModel.reportPost(post.id) }
+                                onReportClick = { viewModel.reportPost(post.id) },
+                                onAuthorClick = post.authorId?.let { { onUserClick(it) } }
                             )
                         }
                     }

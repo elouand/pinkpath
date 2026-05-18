@@ -92,6 +92,7 @@ fun PostCard(
     onLikeClick: (() -> Unit)? = null,
     sharedItinerary: SharedItineraryData? = null,
     onReportClick: (() -> Unit)? = null,
+    onAuthorClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var showReportDialog by remember { mutableStateOf(false) }
@@ -139,7 +140,10 @@ fun PostCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = if (onAuthorClick != null) Modifier.clickable { onAuthorClick() } else Modifier
+            ) {
                 if (authorProfileUrl != null) {
                     AsyncImage(
                         model = authorProfileUrl,

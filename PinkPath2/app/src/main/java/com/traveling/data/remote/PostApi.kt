@@ -127,7 +127,7 @@ interface PostApi {
     @POST("users/{userId}/follow")
     suspend fun followUser(@Path("userId") userId: Int, @Body request: FollowRequest): Map<String, Any>
 
-    @DELETE("users/{userId}/follow")
+    @HTTP(method = "DELETE", path = "users/{userId}/follow", hasBody = true)
     suspend fun unfollowUser(@Path("userId") userId: Int, @Body request: FollowRequest): Map<String, Any>
 
     @PUT("users/{userId}/follow/notify")

@@ -170,6 +170,7 @@ app.get('/api/photos', async (req, res) => {
             audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null,
             author: p.author ? (p.author.pseudo || p.author.username) : "Anonyme",
             authorAvatarUrl: p.author && p.author.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
+            authorId: p.authorId || null,
             likes: p.likesCount || 0,
             commentCount: p._count ? p._count.comments : 0,
             isLiked: p.likedBy && p.likedBy.length > 0,
@@ -239,6 +240,7 @@ app.get('/api/photos/following', async (req, res) => {
             audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null,
             author: p.author ? (p.author.pseudo || p.author.username) : "Anonyme",
             authorAvatarUrl: p.author && p.author.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
+            authorId: p.authorId || null,
             likes: p.likesCount || 0,
             commentCount: p._count ? p._count.comments : 0,
             isLiked: p.likedBy && p.likedBy.length > 0,
@@ -435,6 +437,7 @@ app.get('/api/groups/:groupId', async (req, res) => {
                 date: p.date, // <-- Ajouté !
                 author: p.author?.pseudo || p.author?.username || "Anonyme",
                 authorAvatarUrl: p.author?.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
+                authorId: p.authorId || null,
                 likes: p.likesCount || 0,
                 isLiked: p.likedBy && p.likedBy.length > 0, // <-- Ajouté !
                 commentCount: p._count?.comments || 0,

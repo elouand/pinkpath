@@ -124,7 +124,7 @@ fun MainNavigation() {
     ) { innerPadding ->
         NavHost(navController = navController, startDestination = Screen.Home.route, modifier = Modifier.padding(innerPadding)) {
             composable(Screen.Home.route) {
-                HomeScreen(viewModel = postViewModel, mapViewModel = mapViewModel, onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) }, onNavigateToMap = { navController.navigate(Screen.Map.route) { popUpTo(navController.graph.startDestinationId); launchSingleTop = true } })
+                HomeScreen(viewModel = postViewModel, mapViewModel = mapViewModel, onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) }, onNavigateToMap = { navController.navigate(Screen.Map.route) { popUpTo(navController.graph.startDestinationId); launchSingleTop = true } }, onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) })
             }
             composable(Screen.Feed.route) {
                 FeedScreen(
@@ -144,11 +144,12 @@ fun MainNavigation() {
                     mapViewModel = mapViewModel,
                     onBack = { navController.popBackStack() },
                     onCreatePostClick = { loc, lat, lon -> navController.navigate(Screen.CreatePost.createRoute(loc, lat, lon)) },
-                    onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) }
+                    onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
+                    onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) }
                 )
             }
             composable(Screen.PostDetail.route, arguments = listOf(navArgument("postId") { type = NavType.StringType })) { backStackEntry ->
-                PostDetailScreen(postId = backStackEntry.arguments?.getString("postId") ?: "", onBack = { navController.popBackStack() }, viewModel = postViewModel, authViewModel = authViewModel, itineraryViewModel = itineraryViewModel)
+                PostDetailScreen(postId = backStackEntry.arguments?.getString("postId") ?: "", onBack = { navController.popBackStack() }, onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) }, viewModel = postViewModel, authViewModel = authViewModel, itineraryViewModel = itineraryViewModel)
             }
             composable(
                 route = Screen.CreatePost.route,
@@ -219,6 +220,7 @@ fun MainNavigation() {
                     onBack = { navController.popBackStack() },
                     onNavigateToGroupFeed = { navController.navigate(Screen.Feed.route + "?groupName=$it") },
                     onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
+                    onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) },
                     itineraryViewModel = itineraryViewModel
                 )
             }
