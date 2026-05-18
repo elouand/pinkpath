@@ -37,6 +37,7 @@ import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.util.uriToFile
 import kotlinx.coroutines.delay
 import java.io.File
+import androidx.compose.foundation.BorderStroke
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -54,6 +55,9 @@ fun CreatePostScreen(
     val error by viewModel.error.collectAsState()
     val currentUser by authViewModel.currentUser.collectAsState()
     val userGroups by viewModel.groups.collectAsState()
+    val suggestedTags by viewModel.suggestedTags.collectAsState()
+    val isSuggestingTags by viewModel.isSuggestingTags.collectAsState()
+    val toastMessage by viewModel.toastMessage.collectAsState()
 
     var imageUri by remember { mutableStateOf<Uri?>(null) }
     var description by remember { mutableStateOf("") }
@@ -110,8 +114,16 @@ fun CreatePostScreen(
         }
     }
 
+    LaunchedEffect(toastMessage) {
+        toastMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearToast()
+        }
+    }
+
     LaunchedEffect(locationQuery) {
         if (locationQuery.length > 2 && selectedLocation?.properties?.name != locationQuery) {
+            selectedLocation = null
             delay(500)
             val result = viewModel.searchLocation(locationQuery)
             result.getOrNull()?.let { list ->
@@ -119,6 +131,7 @@ fun CreatePostScreen(
             }
         } else if (locationQuery.length <= 2) {
             suggestions = emptyList()
+            selectedLocation = null
         }
     }
 
@@ -324,6 +337,74 @@ fun CreatePostScreen(
                 }
             }
         )
+
+        // Bouton suggestion IA (visible dès qu'un lieu est sélectionné dans la liste)
+        if (selectedLocation != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    val props = selectedLocation!!.properties
+                    val place = listOfNotNull(props.name, props.street, props.city, props.country)
+                        .distinct()
+                        .filter { it.isNotBlank() }
+                        .joinToString(", ")
+                    if (place.isNotBlank()) viewModel.suggestTagsFromPlace(place, imageUri)
+                },
+                enabled = !isSuggestingTags,
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, TravelingDeepPurple.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isSuggestingTags) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = TravelingDeepPurple)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Analyse en cours...", color = TravelingDeepPurple)
+                } else {
+                    Icon(Icons.Default.Lightbulb, null, tint = TravelingDeepPurple, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Suggérer des tags par IA", color = TravelingDeepPurple)
+                }
+            }
+        }
+
+        // Tags suggérés par IA
+        if (suggestedTags.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = TravelingDeepPurple.copy(alpha = 0.06f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Tags suggérés — appuie pour ajouter :", fontSize = 12.sp, color = Color.Gray)
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        suggestedTags.forEach { tag ->
+                            val alreadyAdded = selectedTags.contains(tag)
+                            FilterChip(
+                                selected = alreadyAdded,
+                                onClick = {
+                                    if (alreadyAdded) selectedTags.remove(tag)
+                                    else selectedTags.add(tag)
+                                },
+                                label = { Text(tag, fontSize = 12.sp) },
+                                leadingIcon = {
+                                    Icon(
+                                        if (alreadyAdded) Icons.Default.Check else Icons.Default.Add,
+                                        null, modifier = Modifier.size(14.dp)
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = TravelingDeepPurple,
+                                    selectedLabelColor = Color.White,
+                                    selectedLeadingIconColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 

@@ -7,6 +7,7 @@ import com.traveling.domain.model.ItineraryVariantsResponse
 import com.traveling.domain.model.MultiRouteResponse
 import com.traveling.domain.model.SaveItineraryRequest
 import com.traveling.domain.model.SavedItinerary
+import com.traveling.domain.model.StepDetailResponse
 import com.traveling.domain.model.UpdateItineraryRequest
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -45,4 +46,11 @@ interface ItineraryApi {
         @Path("id") id: Int,
         @Body request: CopyItineraryRequest
     ): SavedItinerary
+
+    @GET("places/step-details")
+    suspend fun getStepDetails(
+        @Query("name") name: String,
+        @Query("lat") lat: Double,
+        @Query("lon") lon: Double
+    ): StepDetailResponse
 }

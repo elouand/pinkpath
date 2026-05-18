@@ -17,6 +17,7 @@ import com.traveling.domain.model.ItineraryVariant
 import com.traveling.domain.model.LocationPoint
 import com.traveling.domain.model.RoutePoint
 import com.traveling.domain.model.SavedItinerary
+import com.traveling.domain.model.StepDetailResponse
 import com.traveling.domain.model.WeatherDay
 import com.traveling.domain.repository.ItineraryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -51,7 +52,9 @@ class ItineraryViewModel @Inject constructor(
         val isLoadingItinerary: Boolean = false,
         val copySuccess: Boolean = false,
         val likedIds: Set<Int> = emptySet(),
-        val isOffline: Boolean = false
+        val isOffline: Boolean = false,
+        val stepDetail: StepDetailResponse? = null,
+        val isLoadingStepDetail: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -100,13 +103,27 @@ class ItineraryViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isGenerating = true, error = null, variants = null, goodWeatherDays = null)
             repository.generateItineraries(locations, durationMinutes, mode, activities, wantsGoodWeather, budget, effortLevel, weatherSensitivity, timeSlot)
                 .onSuccess { response ->
+                    localStore.saveCachedVariants(response.variants)
                     _uiState.value = _uiState.value.copy(
                         variants = response.variants,
                         goodWeatherDays = response.goodWeatherDays,
-                        isGenerating = false
+                        isGenerating = false,
+                        isOffline = false
                     )
                 }
-                .onFailure { _uiState.value = _uiState.value.copy(error = it.message, isGenerating = false) }
+                .onFailure {
+                    val cached = localStore.getCachedVariants()
+                    if (cached.isNotEmpty()) {
+                        _uiState.value = _uiState.value.copy(
+                            variants = cached,
+                            isGenerating = false,
+                            isOffline = true,
+                            error = "Hors-ligne — affichage du dernier calcul"
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(error = it.message, isGenerating = false)
+                    }
+                }
         }
     }
 
@@ -158,13 +175,27 @@ class ItineraryViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoadingItinerary = true, error = null, activeRoute = null)
             repository.getItineraryById(itinerary.id)
                 .onSuccess { full ->
+                    localStore.saveCachedItineraryFull(full)
                     _uiState.value = _uiState.value.copy(
                         activeItinerary = full,
                         activeRoute = null,
-                        isLoadingItinerary = false
+                        isLoadingItinerary = false,
+                        isOffline = false
                     )
                 }
-                .onFailure { _uiState.value = _uiState.value.copy(error = it.message, isLoadingItinerary = false) }
+                .onFailure {
+                    val cached = localStore.getCachedItineraryFull(itinerary.id)
+                    if (cached != null) {
+                        _uiState.value = _uiState.value.copy(
+                            activeItinerary = cached,
+                            activeRoute = null,
+                            isLoadingItinerary = false,
+                            isOffline = true
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(error = it.message, isLoadingItinerary = false)
+                    }
+                }
         }
     }
 
@@ -204,8 +235,18 @@ class ItineraryViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingItinerary = true)
             repository.getItineraryById(itinerary.id)
-                .onSuccess { _uiState.value = _uiState.value.copy(editItinerary = it, isLoadingItinerary = false) }
-                .onFailure { _uiState.value = _uiState.value.copy(error = it.message, isLoadingItinerary = false) }
+                .onSuccess {
+                    localStore.saveCachedItineraryFull(it)
+                    _uiState.value = _uiState.value.copy(editItinerary = it, isLoadingItinerary = false)
+                }
+                .onFailure {
+                    val cached = localStore.getCachedItineraryFull(itinerary.id)
+                    if (cached != null) {
+                        _uiState.value = _uiState.value.copy(editItinerary = cached, isLoadingItinerary = false, isOffline = true)
+                    } else {
+                        _uiState.value = _uiState.value.copy(error = it.message, isLoadingItinerary = false)
+                    }
+                }
         }
     }
 
@@ -237,6 +278,17 @@ class ItineraryViewModel @Inject constructor(
     }
 
     fun clearCopySuccess() { _uiState.value = _uiState.value.copy(copySuccess = false) }
+
+    fun loadStepDetails(name: String, lat: Double, lon: Double) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingStepDetail = true, stepDetail = null)
+            repository.getStepDetails(name, lat, lon)
+                .onSuccess { _uiState.value = _uiState.value.copy(stepDetail = it, isLoadingStepDetail = false) }
+                .onFailure { _uiState.value = _uiState.value.copy(isLoadingStepDetail = false) }
+        }
+    }
+
+    fun clearStepDetail() { _uiState.value = _uiState.value.copy(stepDetail = null, isLoadingStepDetail = false) }
 
     fun downloadPdf(itineraryId: Int, itineraryName: String, context: Context) {
         val url = "${NetworkConfig.BASE_URL}itineraries/$itineraryId/pdf"

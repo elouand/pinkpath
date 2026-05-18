@@ -1,5 +1,9 @@
 package com.traveling.ui.travelshare
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.traveling.data.local.SessionManager
@@ -16,6 +20,8 @@ import com.traveling.domain.model.PublicUserProfile
 import com.traveling.domain.model.UserSearchResult
 import com.traveling.domain.repository.PostRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,7 +36,8 @@ import javax.inject.Inject
 class PostViewModel @Inject constructor(
     private val repository: PostRepository,
     private val photonApi: PhotonApi,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     private val _posts = MutableStateFlow<List<Post>>(emptyList())
@@ -433,6 +440,81 @@ class PostViewModel @Inject constructor(
             repository.markAllNotificationsRead(userId).onSuccess {
                 _notifications.value = _notifications.value.map { it.copy(read = true) }
                 _unreadCount.value = 0
+            }
+        }
+    }
+
+    private val _suggestedTags = MutableStateFlow<List<String>>(emptyList())
+    val suggestedTags: StateFlow<List<String>> = _suggestedTags
+
+    private val _isSuggestingTags = MutableStateFlow(false)
+    val isSuggestingTags: StateFlow<Boolean> = _isSuggestingTags
+
+    fun suggestTagsFromPlace(placeName: String, imageUri: Uri? = null) {
+        viewModelScope.launch {
+            _isSuggestingTags.value = true
+            _suggestedTags.value = emptyList()
+            try {
+                val imageBase64 = imageUri?.let { uri ->
+                    try {
+                        val bitmap = appContext.contentResolver.openInputStream(uri)?.use { stream ->
+                            BitmapFactory.decodeStream(stream)
+                        } ?: return@let null
+                        val maxSize = 400
+                        val scale = minOf(maxSize.toFloat() / bitmap.width, maxSize.toFloat() / bitmap.height, 1f)
+                        val scaled = Bitmap.createScaledBitmap(
+                            bitmap,
+                            (bitmap.width * scale).toInt(),
+                            (bitmap.height * scale).toInt(),
+                            true
+                        )
+                        val out = ByteArrayOutputStream()
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 70, out)
+                        android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+                    } catch (e: Exception) { null }
+                }
+                repository.suggestTags(placeName, imageBase64)
+                    .onSuccess { tags -> _suggestedTags.value = tags }
+                    .onFailure { err -> _toastMessage.value = "Suggestion impossible : ${err.message}" }
+            } catch (e: Exception) {
+                _toastMessage.value = "Erreur : ${e.message}"
+            } finally {
+                _isSuggestingTags.value = false
+            }
+        }
+    }
+
+    fun clearSuggestedTags() { _suggestedTags.value = emptyList() }
+
+    private val _reportedPosts = MutableStateFlow<List<com.traveling.domain.model.ReportedPost>>(emptyList())
+    val reportedPosts: StateFlow<List<com.traveling.domain.model.ReportedPost>> = _reportedPosts
+
+    fun reportPost(postId: String) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.reportPost(postId, userId).onSuccess {
+                _toastMessage.value = "Post signalé"
+            }.onFailure {
+                _toastMessage.value = "Erreur lors du signalement"
+            }
+        }
+    }
+
+    fun loadReportedPosts() {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.getReportedPosts(userId).onSuccess { _reportedPosts.value = it }
+        }
+    }
+
+    fun deleteReportedPost(postId: String) {
+        val userId = sessionManager.getUserId()?.toIntOrNull() ?: return
+        viewModelScope.launch {
+            repository.deletePost(postId, userId).onSuccess {
+                _reportedPosts.value = _reportedPosts.value.filter { it.id.toString() != postId }
+                _toastMessage.value = "Post supprimé"
+            }.onFailure {
+                _toastMessage.value = "Erreur lors de la suppression"
             }
         }
     }

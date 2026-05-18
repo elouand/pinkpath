@@ -29,7 +29,8 @@ data class ItineraryStep(
     val photoUrl: String? = null,
     val openingHours: String? = null,
     val avgCost: Int = 0,
-    val costIsReal: Boolean = false
+    val costIsReal: Boolean = false,
+    val postPhotoUrls: List<String> = emptyList()
 )
 
 data class ItineraryVariant(
@@ -111,3 +112,16 @@ data class ShareItineraryRequest(
 )
 
 data class CopyItineraryRequest(val userId: Int)
+
+data class CommunityPost(
+    val photoUrl: String,
+    val description: String?,
+    val authorPseudo: String?
+)
+
+data class StepDetailResponse(
+    val name: String,
+    val wikiSummary: String?,
+    val wikiPhotoUrl: String?,
+    val communityPosts: List<CommunityPost>
+)

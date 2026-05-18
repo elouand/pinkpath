@@ -9,10 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,7 +32,8 @@ fun ProfileScreen(
     postViewModel: PostViewModel,
     onLoginClick: () -> Unit,
     onSignupClick: () -> Unit,
-    onNotificationsClick: () -> Unit = {}
+    onNotificationsClick: () -> Unit = {},
+    onAdminClick: () -> Unit = {}
 ) {
     val currentUser by viewModel.currentUser.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -198,6 +196,20 @@ fun ProfileScreen(
             }
             
             Spacer(modifier = Modifier.height(40.dp))
+
+            if (currentUser?.isAdmin == true) {
+                Button(
+                    onClick = onAdminClick,
+                    colors = ButtonDefaults.buttonColors(containerColor = TravelingDeepPurple),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(0.6f)
+                ) {
+                    Icon(Icons.Default.AdminPanelSettings, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Admin", color = Color.White)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             Button(
                 onClick = { viewModel.logout() },

@@ -12,6 +12,7 @@ import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
 import com.traveling.domain.model.JoinRequest
 import com.traveling.domain.model.PublicUserProfile
+import com.traveling.domain.model.ReportRequest
 import com.traveling.domain.model.ShareItineraryRequest
 import com.traveling.domain.model.UserSearchResult
 import com.traveling.domain.repository.PostRepository
@@ -294,4 +295,25 @@ class PostRepositoryImpl @Inject constructor(
             Result.failure(e)
         }
     }
+
+    override suspend fun reportPost(postId: String, userId: Int): Result<Unit> = try {
+        api.reportPost(postId, com.traveling.domain.model.ReportRequest(userId))
+        Result.success(Unit)
+    } catch (e: Exception) { Result.failure(e) }
+
+    override suspend fun getReportedPosts(userId: Int): Result<List<com.traveling.domain.model.ReportedPost>> = try {
+        Result.success(api.getReportedPosts(userId))
+    } catch (e: Exception) { Result.failure(e) }
+
+    override suspend fun deletePost(postId: String, userId: Int): Result<Unit> = try {
+        api.deletePost(postId, userId)
+        Result.success(Unit)
+    } catch (e: Exception) { Result.failure(e) }
+
+    override suspend fun suggestTags(placeName: String, imageBase64: String?): Result<List<String>> = try {
+        val body = mutableMapOf("placeName" to placeName)
+        imageBase64?.let { body["imageBase64"] = it }
+        val response = api.suggestTags(body)
+        Result.success(response.tags)
+    } catch (e: Exception) { Result.failure(e) }
 }

@@ -225,7 +225,8 @@ fun HomeScreen(
                                         }
                                     },
                                     onClick = { onPostClick(post.id) },
-                                    sharedItinerary = post.sharedItinerary
+                                    sharedItinerary = post.sharedItinerary,
+                                    onReportClick = { viewModel.reportPost(post.id) }
                                 )
                             }
                         }

@@ -19,6 +19,7 @@ model User {
   password     String
   email        String?       @unique
   profileUrl   String?
+  isAdmin      Boolean       @default(false)
   photos            Photo[]
   members           GroupMember[]
   comments          Comment[]
@@ -31,6 +32,7 @@ model User {
   sentNotifications Notification[]   @relation("SentNotifications")
   createdEvents     Event[]
   eventInterests    EventInterest[]
+  reports           Report[]
 }
 
 model Follow {
@@ -133,6 +135,17 @@ model Photo {
   comments   Comment[]
   likesCount Int       @default(0)
   likedBy    Like[]
+  reports    Report[]
+}
+
+model Report {
+  id         Int      @id @default(autoincrement())
+  reporter   User     @relation(fields: [reporterId], references: [id])
+  reporterId Int
+  photo      Photo    @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  photoId    Int
+  createdAt  DateTime @default(now())
+  @@unique([reporterId, photoId])
 }
 
 model Tag {

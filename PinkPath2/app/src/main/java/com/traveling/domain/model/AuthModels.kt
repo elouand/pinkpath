@@ -19,7 +19,8 @@ data class UserData(
     val pseudo: String? = null,
     val email: String? = null,
     val profileUrl: String? = null,
-    val role: String? = null // Ajouté pour les rôles dans les groupes
+    val role: String? = null,
+    val isAdmin: Boolean = false
 )
 
 data class RegisterResponse(

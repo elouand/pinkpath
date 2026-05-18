@@ -9,7 +9,10 @@ import com.traveling.domain.model.Post
 import com.traveling.domain.model.Group
 import com.traveling.domain.model.JoinRequest
 import com.traveling.domain.model.PublicUserProfile
+import com.traveling.domain.model.ReportedPost
+import com.traveling.domain.model.ReportRequest
 import com.traveling.domain.model.ShareItineraryRequest
+import com.traveling.domain.model.SuggestTagsResponse
 import com.traveling.domain.model.UserSearchResult
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
@@ -155,5 +158,25 @@ interface PostApi {
     suspend fun unmarkInterested(
         @Path("eventId") eventId: Int,
         @Body request: InterestRequest
+    ): Map<String, Any>
+
+    @POST("ai/suggest-tags")
+    suspend fun suggestTags(@Body body: Map<String, String>): SuggestTagsResponse
+
+    @POST("photos/{photoId}/report")
+    suspend fun reportPost(
+        @Path("photoId") photoId: String,
+        @Body request: ReportRequest
+    ): Map<String, Any>
+
+    @GET("admin/reports")
+    suspend fun getReportedPosts(
+        @Query("userId") userId: Int
+    ): List<ReportedPost>
+
+    @DELETE("admin/photos/{photoId}")
+    suspend fun deletePost(
+        @Path("photoId") photoId: String,
+        @Query("userId") userId: Int
     ): Map<String, Any>
 }

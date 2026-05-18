@@ -131,7 +131,7 @@ fun MainNavigation() {
                     viewModel = postViewModel,
                     authViewModel = authViewModel,
                     onPostClick = { navController.navigate(Screen.PostDetail.createRoute(it)) },
-                    onCreatePostClick = { navController.navigate(Screen.CreatePost.route) },
+                    onCreatePostClick = { navController.navigate(Screen.CreatePost.createRoute()) },
                     onUserClick = { navController.navigate(Screen.UserProfile.createRoute(it)) }
                 )
             }
@@ -173,7 +173,14 @@ fun MainNavigation() {
                     postViewModel = postViewModel,
                     onLoginClick = { navController.navigate(Screen.Login.route) },
                     onSignupClick = { navController.navigate(Screen.Signup.route) },
-                    onNotificationsClick = { navController.navigate(Screen.Notifications.route) }
+                    onNotificationsClick = { navController.navigate(Screen.Notifications.route) },
+                    onAdminClick = { navController.navigate(Screen.Admin.route) }
+                )
+            }
+            composable(Screen.Admin.route) {
+                com.traveling.ui.travelshare.AdminScreen(
+                    onBack = { navController.popBackStack() },
+                    viewModel = postViewModel
                 )
             }
             composable(Screen.Notifications.route) {

@@ -81,3 +81,17 @@ data class Post(
     val fullImageUrl: String? get() = imageUrl
     val displayLikes: Int get() = likes
 }
+
+data class ReportRequest(val userId: Int)
+
+data class SuggestTagsResponse(val tags: List<String>)
+
+data class ReportedPost(
+    val id: Int,
+    val description: String?,
+    val imageUrl: String?,
+    val author: String,
+    val reportCount: Int,
+    val tags: List<String>,
+    val date: String?
+)

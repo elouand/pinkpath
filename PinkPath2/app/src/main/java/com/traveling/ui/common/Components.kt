@@ -12,6 +12,10 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,8 +91,28 @@ fun PostCard(
     isLiked: Boolean = false,
     onLikeClick: (() -> Unit)? = null,
     sharedItinerary: SharedItineraryData? = null,
+    onReportClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    var showReportDialog by remember { mutableStateOf(false) }
+
+    if (showReportDialog) {
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            icon = { Icon(Icons.Default.Flag, null, tint = Color(0xFFE53935)) },
+            title = { Text("Signaler ce post") },
+            text = { Text("Voulez-vous signaler ce post comme inapproprié ?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onReportClick?.invoke()
+                    showReportDialog = false
+                }) { Text("Signaler", color = Color(0xFFE53935)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReportDialog = false }) { Text("Annuler") }
+            }
+        )
+    }
     Card(
         shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -168,27 +192,41 @@ fun PostCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { onLikeClick?.invoke() }
-                ) {
-                    Icon(
-                        imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                        contentDescription = null,
-                        tint = if (isLiked) TravelingDeepPurple else Color.Black,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = likes, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { onLikeClick?.invoke() }
+                    ) {
+                        Icon(
+                            imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                            contentDescription = null,
+                            tint = if (isLiked) TravelingDeepPurple else Color.Black,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = likes, fontWeight = FontWeight.Bold)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = comments, fontWeight = FontWeight.Bold)
+                    }
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = comments, fontWeight = FontWeight.Bold)
+                if (onReportClick != null) {
+                    IconButton(
+                        onClick = { showReportDialog = true },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ReportProblem,
+                            contentDescription = "Signaler",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

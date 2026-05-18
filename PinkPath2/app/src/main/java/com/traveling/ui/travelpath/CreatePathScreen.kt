@@ -1,5 +1,11 @@
 package com.traveling.ui.travelpath
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -23,15 +29,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.traveling.domain.model.ItineraryStep
 import com.traveling.domain.model.ItineraryVariant
 import com.traveling.domain.model.LocationPoint
+import com.traveling.domain.model.StepDetailResponse
 import com.traveling.domain.model.WeatherDay
 import com.traveling.ui.theme.TravelingDeepPurple
 import com.traveling.ui.travelshare.AuthTextField
@@ -44,10 +53,45 @@ fun CreatePathScreen(
     viewModel: ItineraryViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
 
+    // ── State ─────────────────────────────────────────────────────────────
     var pathName by remember { mutableStateOf("") }
     var locationQuery by remember { mutableStateOf("") }
     var locations by remember { mutableStateOf<List<LocationPoint>>(emptyList()) }
+
+    // ── GPS ───────────────────────────────────────────────────────────────
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    fun applyGpsLocation() {
+        try {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            @Suppress("MissingPermission")
+            val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if (loc != null) {
+                val gpsPoint = LocationPoint(loc.latitude, loc.longitude, "Ma position")
+                locations = listOf(gpsPoint) + locations.filter { it.name != "Ma position" }
+            }
+        } catch (_: Exception) {}
+    }
+
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasLocationPermission = granted
+        if (granted) applyGpsLocation()
+    }
+
+    fun useGpsLocation() {
+        if (hasLocationPermission) applyGpsLocation()
+        else locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+
     var durationMinutes by remember { mutableStateOf(60f) }
     var selectedMode by remember { mutableStateOf("walking") }
     var selectedActivities by remember { mutableStateOf(setOf("Restauration", "Culture", "Loisirs")) }
@@ -126,6 +170,25 @@ fun CreatePathScreen(
                         }
                     }
                 )
+                // Bouton GPS
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (locations.any { it.name == "Ma position" })
+                        TravelingDeepPurple else TravelingDeepPurple.copy(alpha = 0.1f),
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clickable { useGpsLocation() }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.MyLocation,
+                            contentDescription = "Ma position",
+                            tint = if (locations.any { it.name == "Ma position" })
+                                Color.White else TravelingDeepPurple,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
             }
 
             if (uiState.searchResults.isNotEmpty()) {
@@ -166,11 +229,20 @@ fun CreatePathScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(TravelingDeepPurple.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                                .background(
+                                    if (loc.name == "Ma position") TravelingDeepPurple.copy(alpha = 0.15f)
+                                    else TravelingDeepPurple.copy(alpha = 0.08f),
+                                    RoundedCornerShape(8.dp)
+                                )
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Stars, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                            Icon(
+                                if (loc.name == "Ma position") Icons.Default.MyLocation else Icons.Default.Stars,
+                                null,
+                                tint = TravelingDeepPurple,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(loc.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
                             IconButton(
@@ -517,10 +589,32 @@ fun CreatePathScreen(
                                     variantToSave = variant
                                     saveNameInput = if (pathName.isNotBlank()) pathName else variant.name
                                     showSaveDialog = true
+                                },
+                                onStepDetails = { step ->
+                                    viewModel.loadStepDetails(step.name, step.lat, step.lon)
                                 }
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ── Bottom sheet détails d'une étape ──────────────────────────────
+    if (uiState.isLoadingStepDetail || uiState.stepDetail != null) {
+        ModalBottomSheet(
+            onDismissRequest = { viewModel.clearStepDetail() },
+            containerColor = MaterialTheme.colorScheme.background,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            if (uiState.isLoadingStepDetail) {
+                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = TravelingDeepPurple)
+                }
+            } else {
+                uiState.stepDetail?.let { detail ->
+                    StepDetailSheet(detail = detail, onDismiss = { viewModel.clearStepDetail() })
                 }
             }
         }
@@ -561,16 +655,48 @@ fun CreatePathScreen(
 private fun VariantCard(
     variant: ItineraryVariant,
     isSaving: Boolean,
-    onChoose: () -> Unit
+    onChoose: () -> Unit,
+    onStepDetails: (ItineraryStep) -> Unit
 ) {
     var expandedSteps by remember { mutableStateOf(false) }
+
+    // Collect all available photos across steps (Wikipedia first, then community)
+    val allPhotos = remember(variant) {
+        variant.steps.flatMap { step ->
+            listOfNotNull(step.photoUrl) + step.postPhotoUrls
+        }.distinct().take(6)
+    }
 
     Card(
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(4.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column {
+            // ── Bande de photos illustrant l'itinéraire ──────────────────
+            if (allPhotos.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    items(allPhotos) { url ->
+                        AsyncImage(
+                            model = url,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .height(130.dp)
+                                .width(if (allPhotos.size == 1) 600.dp else 160.dp)
+                                .clip(RoundedCornerShape(0.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+            }
+
+            Column(modifier = Modifier.padding(16.dp)) {
             // Header: name + duration/distance chips
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -646,7 +772,7 @@ private fun VariantCard(
 
             val stepsToShow = if (expandedSteps) variant.steps else variant.steps.take(4)
             stepsToShow.forEachIndexed { index, step ->
-                StepRow(index = index + 1, step = step)
+                StepRow(index = index + 1, step = step, onDetailsClick = { onStepDetails(step) })
             }
             if (!expandedSteps && variant.steps.size > 4) {
                 Text("+ ${variant.steps.size - 4} étape(s)…", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
@@ -669,54 +795,81 @@ private fun VariantCard(
                     Text("Choisir cet itinéraire", fontWeight = FontWeight.Bold)
                 }
             }
-        }
-    }
+            } // inner Column (padding)
+        } // outer Column
+    } // Card
 }
 
 @Composable
-private fun StepRow(index: Int, step: ItineraryStep) {
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Surface(
-            shape = RoundedCornerShape(4.dp),
-            color = TravelingDeepPurple,
-            modifier = Modifier.size(20.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(index.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+private fun StepRow(index: Int, step: ItineraryStep, onDetailsClick: () -> Unit) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = TravelingDeepPurple,
+                modifier = Modifier.size(20.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(index.toString(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        // Photo thumbnail
-        if (!step.photoUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = step.photoUrl,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop
-            )
             Spacer(modifier = Modifier.width(8.dp))
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(step.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            step.type?.let { Text(it, fontSize = 11.sp, color = Color.Gray) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                step.openingHours?.let {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Schedule, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(11.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text(it, fontSize = 10.sp, color = Color(0xFF4CAF50))
+            if (!step.photoUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = step.photoUrl,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(step.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                step.type?.let { Text(it, fontSize = 11.sp, color = Color.Gray) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    step.openingHours?.let {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Schedule, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(11.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text(it, fontSize = 10.sp, color = Color(0xFF4CAF50))
+                        }
+                    }
+                    if (step.avgCost == 0) {
+                        Text("Gratuit", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Medium)
+                    } else if (step.avgCost > 0) {
+                        val prefix = if (step.costIsReal) "" else "~"
+                        Text("${prefix}${step.avgCost} €", fontSize = 10.sp,
+                            color = if (step.costIsReal) Color(0xFF1565C0) else Color.Gray,
+                            fontWeight = if (step.costIsReal) FontWeight.Medium else FontWeight.Normal
+                        )
                     }
                 }
-                if (step.avgCost == 0) {
-                    Text("Gratuit", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Medium)
-                } else if (step.avgCost > 0) {
-                    val prefix = if (step.costIsReal) "" else "~"
-                    Text("${prefix}${step.avgCost} €", fontSize = 10.sp,
-                        color = if (step.costIsReal) Color(0xFF1565C0) else Color.Gray,
-                        fontWeight = if (step.costIsReal) FontWeight.Medium else FontWeight.Normal
+            }
+            TextButton(
+                onClick = onDetailsClick,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+            ) {
+                Icon(Icons.Default.Info, null, tint = TravelingDeepPurple, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(3.dp))
+                Text("Détails", fontSize = 11.sp, color = TravelingDeepPurple)
+            }
+        }
+        // Photos de la communauté
+        if (step.postPhotoUrls.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.padding(start = 28.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.People, null, tint = Color.Gray, modifier = Modifier.size(10.dp))
+                Spacer(Modifier.width(2.dp))
+                step.postPhotoUrls.take(4).forEach { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Crop
                     )
                 }
             }
@@ -883,6 +1036,127 @@ private fun TimeSlotChip(
 
 private fun Set<String>.toggle(item: String): Set<String> =
     if (contains(item)) minus(item) else plus(item)
+
+@Composable
+private fun StepDetailSheet(
+    detail: StepDetailResponse,
+    onDismiss: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                detail.name,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = TravelingDeepPurple,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onDismiss) {
+                Icon(Icons.Default.Close, null, tint = Color.Gray)
+            }
+        }
+
+        // Photo Wikipedia en bannière
+        if (!detail.wikiPhotoUrl.isNullOrBlank()) {
+            Spacer(Modifier.height(12.dp))
+            AsyncImage(
+                model = detail.wikiPhotoUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        // Résumé Wikipedia
+        if (!detail.wikiSummary.isNullOrBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = TravelingDeepPurple.copy(alpha = 0.06f)
+            ) {
+                Row(modifier = Modifier.padding(10.dp)) {
+                    Icon(
+                        Icons.Default.Info, null,
+                        tint = TravelingDeepPurple,
+                        modifier = Modifier.size(16.dp).padding(top = 2.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(detail.wikiSummary, fontSize = 13.sp, color = Color.DarkGray, lineHeight = 19.sp)
+                }
+            }
+        }
+
+        // Posts de la communauté
+        if (detail.communityPosts.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.People, null, tint = TravelingDeepPurple, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "Photos de la communauté (${detail.communityPosts.size})",
+                    fontWeight = FontWeight.Bold,
+                    color = TravelingDeepPurple,
+                    fontSize = 14.sp
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(detail.communityPosts) { post ->
+                    Column(modifier = Modifier.width(140.dp)) {
+                        AsyncImage(
+                            model = post.photoUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(140.dp)
+                                .clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        post.authorPseudo?.let {
+                            Text(
+                                "@$it",
+                                fontSize = 10.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        post.description?.let {
+                            Text(
+                                it,
+                                fontSize = 11.sp,
+                                color = Color.DarkGray,
+                                maxLines = 2,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Aucun post de la communauté pour ce lieu.",
+                fontSize = 13.sp,
+                color = Color.Gray,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Spacer(Modifier.height(32.dp))
+    }
+}
 
 @Composable
 private fun WeatherDaysPanel(days: List<WeatherDay>) {

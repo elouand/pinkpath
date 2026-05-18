@@ -210,7 +210,8 @@ fun GroupDetailScreen(
                                         isLiked = post.isLiked,
                                         onLikeClick = { currentUser?.id?.toIntOrNull()?.let { viewModel.toggleLike(post.id, it) } },
                                         onClick = { onPostClick(post.id) },
-                                        sharedItinerary = post.sharedItinerary
+                                        sharedItinerary = post.sharedItinerary,
+                                        onReportClick = { viewModel.reportPost(post.id) }
                                     )
                                 }
                             }

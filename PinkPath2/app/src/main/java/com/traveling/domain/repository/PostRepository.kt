@@ -59,4 +59,8 @@ interface PostRepository {
     suspend fun getGroupEvents(groupId: Int, userId: Int?): Result<List<GroupEvent>>
     suspend fun createEvent(groupId: Int, request: CreateEventRequest): Result<GroupEvent>
     suspend fun toggleInterest(eventId: Int, userId: Int, interested: Boolean): Result<Int>
+    suspend fun reportPost(postId: String, userId: Int): Result<Unit>
+    suspend fun getReportedPosts(userId: Int): Result<List<com.traveling.domain.model.ReportedPost>>
+    suspend fun deletePost(postId: String, userId: Int): Result<Unit>
+    suspend fun suggestTags(placeName: String, imageBase64: String? = null): Result<List<String>>
 }

@@ -11,6 +11,7 @@ import com.traveling.domain.model.LocationPoint
 import com.traveling.domain.model.MultiRouteResponse
 import com.traveling.domain.model.SaveItineraryRequest
 import com.traveling.domain.model.SavedItinerary
+import com.traveling.domain.model.StepDetailResponse
 import com.traveling.domain.model.UpdateItineraryRequest
 import com.traveling.domain.model.UpdateStepRequest
 import com.traveling.domain.repository.ItineraryRepository
@@ -105,6 +106,12 @@ class ItineraryRepositoryImpl @Inject constructor(
 
     override suspend fun copyItinerary(itineraryId: Int, userId: Int): Result<SavedItinerary> = try {
         Result.success(api.copyItinerary(itineraryId, CopyItineraryRequest(userId)))
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    override suspend fun getStepDetails(name: String, lat: Double, lon: Double): Result<StepDetailResponse> = try {
+        Result.success(api.getStepDetails(name, lat, lon))
     } catch (e: Exception) {
         Result.failure(e)
     }

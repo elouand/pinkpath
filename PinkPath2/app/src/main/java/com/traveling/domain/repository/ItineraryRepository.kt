@@ -7,6 +7,7 @@ import com.traveling.domain.model.ItineraryVariantsResponse
 import com.traveling.domain.model.LocationPoint
 import com.traveling.domain.model.MultiRouteResponse
 import com.traveling.domain.model.SavedItinerary
+import com.traveling.domain.model.StepDetailResponse
 
 interface ItineraryRepository {
     suspend fun generateItineraries(
@@ -36,4 +37,5 @@ interface ItineraryRepository {
 
     suspend fun updateItinerary(id: Int, name: String, steps: List<ItineraryStepFull>): Result<ItineraryFull>
     suspend fun copyItinerary(itineraryId: Int, userId: Int): Result<SavedItinerary>
+    suspend fun getStepDetails(name: String, lat: Double, lon: Double): Result<StepDetailResponse>
 }
