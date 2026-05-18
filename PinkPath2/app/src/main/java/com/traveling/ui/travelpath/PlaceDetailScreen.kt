@@ -130,7 +130,8 @@ fun PlaceDetailScreen(
                         currentUser?.id?.toIntOrNull()?.let { userId ->
                             postViewModel.toggleLike(postId, userId)
                         }
-                    }
+                    },
+                    onUserClick = onUserClick
                 )
             }
         }
@@ -199,7 +200,8 @@ fun PlaceDetailsContent(
     details: PlaceDetails,
     posts: List<com.traveling.domain.model.Post>,
     onPostClick: (String) -> Unit,
-    onLikeClick: (String) -> Unit
+    onLikeClick: (String) -> Unit,
+    onUserClick: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
 

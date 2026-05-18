@@ -6,7 +6,7 @@ object NetworkConfig {
 
     // Adresse IP mise à jour d'après hostname -I
 
-    private const val IP_ADDRESS = "192.168.1.187"
+    private const val IP_ADDRESS = "192.168.1.113" //REMPLACER IP ICI =====================================================================================
 
     private const val PORT = "3000"
 

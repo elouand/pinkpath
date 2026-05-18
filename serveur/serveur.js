@@ -27,7 +27,7 @@ const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 
 //---CONFIGURATION--
 
-const SERVER_IP = "192.168.1.187"
+const SERVER_IP = "192.168.1.113"
 const PORT = 3000;
 const BASE_URL = `http://${SERVER_IP}:${PORT}`;
 
