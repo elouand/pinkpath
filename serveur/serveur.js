@@ -14,8 +14,7 @@ const axios = require('axios');
 const PDFDocument = require('pdfkit');
 const cache = new Map();
 
-const JWT_SECRET = "ton_secret_ultra_confidentiel"; // Change ça pour la prod
-// 1. Configuration de la connexion PostgreSQL
+const JWT_SECRET = "ton_secret_ultra_confidentiel";
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
@@ -23,43 +22,37 @@ const prisma = new PrismaClient({ adapter });
 
 const app = express();
 
-// --- CACHE EN MÉMOIRE POUR LES DÉTAILS DE LIEUX ---
 const placeDetailsCache = new Map();
 const CACHE_DURATION = 1000 * 60 * 60; // 1 heure
 
-// --- CONFIGURATION ---
-// IMPORTANT : Remplace "0.0.0.0" ici par ton IP réelle (ex: 192.168.1.XX)
-// pour que ton téléphone puisse charger les images !
-const SERVER_IP = "192.168.1.187"//"192.168.1.25"; 
+//---CONFIGURATION--
+
+const SERVER_IP = "192.168.1.187"
 const PORT = 3000;
 const BASE_URL = `http://${SERVER_IP}:${PORT}`;
 
 app.use(cors());
 app.use(express.json({ limit: '500kb' }));
 
-// Création du dossier uploads
 const uploadDir = 'uploads';
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
 }
 
-// Configuration de Multer
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, 'uploads/'),
     filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage: storage });
 
-// Logs pour les fichiers demandés
 app.use('/uploads', (req, res, next) => {
     console.log(`🖼️  Fichier demandé : ${req.url}`);
     next();
 });
 app.use('/uploads', express.static('uploads'));
 
-// --- ROUTES ---
+//---ROUTES---
 
-/** [POST] Publier une photo + audio */
 app.post('/api/photos', upload.fields([
     { name: 'image', maxCount: 1 }, 
     { name: 'audio', maxCount: 1 }
@@ -99,7 +92,6 @@ app.post('/api/photos', upload.fields([
 
         res.status(201).json(photo);
 
-        // Notifier les abonnés qui ont activé la cloche
         if (authorId) {
             const followers = await prisma.follow.findMany({
                 where: { followingId: parseInt(authorId), notify: true }
@@ -200,7 +192,6 @@ app.get('/api/photos', async (req, res) => {
 
 
 
-/** [GET] Flux des abonnements */
 app.get('/api/photos/following', async (req, res) => {
     const userId = req.query.userId ? parseInt(req.query.userId) : null;
     if (!userId) return res.status(400).json({ error: "userId requis" });
@@ -268,7 +259,6 @@ app.get('/api/photos/following', async (req, res) => {
     }
 });
 
-/** [POST] Créer un nouveau groupe et y ajouter le créateur */
 app.post('/api/groups', upload.single('groupImage'), async (req, res) => {
     try {
         const { name, description, isPublic, userId } = req.body;
@@ -294,7 +284,6 @@ app.post('/api/groups', upload.single('groupImage'), async (req, res) => {
     }
 });
 
-/** [GET] Récupérer les groupes auxquels appartient un utilisateur */
 app.get('/api/users/:userId/groups', async (req, res) => {
     try {
         const { userId } = req.params;
@@ -330,17 +319,15 @@ app.get('/api/users/:userId/groups', async (req, res) => {
             isPublic: membership.group.isPublic,
             userRole: membership.role,
             
-            // On transforme les membres pour correspondre à group.users sur Android
             users: membership.group.members.map(m => ({
                 id: m.user.id,
                 profileUrl: m.user.profileUrl ? `${BASE_URL}${m.user.profileUrl}` : null
             })),
 
-            // On crée l'objet "count" attendu par Kotlin
             count: {
                 users: membership.group._count.members,
                 photos: membership.group._count.photos,
-                paths: 0 // À remplacer par ton compteur d'itinéraires quand tu auras le modèle
+                paths: 0 
             }
         }));
 
@@ -352,12 +339,6 @@ app.get('/api/users/:userId/groups', async (req, res) => {
 });
 
 
-/** [GET] Récupérer les détails d'un groupe (Membres avec rôles + Photos/Itinéraires) */
-/** [GET] Récupérer les détails d'un groupe (Membres avec rôles + Flux du groupe) */
-/** [GET] Récupérer les détails d'un groupe (Membres + Flux + Previews) */
-// =============================================================
-// 1. RECHERCHE GLOBALE (DOIT ÊTRE AVANT :groupId)
-// =============================================================
 app.get('/api/groups/search', async (req, res) => {    const { query, userId } = req.query; // Le userId est maintenant envoyé par l'app
     if (!query) return res.json([]);
 
@@ -366,7 +347,6 @@ app.get('/api/groups/search', async (req, res) => {    const { query, userId } =
             where: { name: { contains: query, mode: 'insensitive' } },
             include: {
                 _count: { select: { members: true, photos: true } },
-                // VÉRIFICATION DES DEMANDES EN ATTENTE
                 joinRequests: userId ? { where: { userId: parseInt(userId) } } : false,
                 members: userId ? { where: { userId: parseInt(userId) } } : false
             }
@@ -378,7 +358,6 @@ app.get('/api/groups/search', async (req, res) => {    const { query, userId } =
             description: g.description,
             imageUrl: g.imageUrl ? `${BASE_URL}${g.imageUrl}` : null,
             isPublic: g.isPublic,
-            // CES DEUX LIGNES SONT CRITIQUES POUR L'APP
             isPending: g.joinRequests?.length > 0, 
             userRole: g.members?.[0]?.role || null,
             count: { users: g._count.members, photos: g._count.photos, paths: 0 }
@@ -386,9 +365,6 @@ app.get('/api/groups/search', async (req, res) => {    const { query, userId } =
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
 
-// =============================================================
-// 2. DÉTAILS D'UN GROUPE
-// =============================================================
 app.get('/api/groups/:groupId', async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -403,7 +379,7 @@ app.get('/api/groups/:groupId', async (req, res) => {
                 photos: {
                     include: {
                         author: true,
-                        tags: true, // <-- Inclus pour les badges de l'app
+                        tags: true, 
                         likedBy: userId ? { where: { userId: userId } } : false, // <-- Pour le coeur rouge
                         itinerary: { include: { steps: { orderBy: { order: 'asc' } } } },
                         _count: { select: { comments: true } }
@@ -433,15 +409,15 @@ app.get('/api/groups/:groupId', async (req, res) => {
                 title: p.type_lieu,
                 content: p.description,
                 imageUrl: p.url ? `${BASE_URL}${p.url}` : null,
-                audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null, // <-- Ajouté !
-                date: p.date, // <-- Ajouté !
+                audioUrl: p.audioUrl ? `${BASE_URL}${p.audioUrl}` : null, 
+                date: p.date, 
                 author: p.author?.pseudo || p.author?.username || "Anonyme",
                 authorAvatarUrl: p.author?.profileUrl ? `${BASE_URL}${p.author.profileUrl}` : null,
                 authorId: p.authorId || null,
                 likes: p.likesCount || 0,
-                isLiked: p.likedBy && p.likedBy.length > 0, // <-- Ajouté !
+                isLiked: p.likedBy && p.likedBy.length > 0, 
                 commentCount: p._count?.comments || 0,
-                tags: p.tags.map(t => t.name), // <-- Ajouté !
+                tags: p.tags.map(t => t.name), 
                 sharedItinerary: p.itinerary ? {
                     id: p.itinerary.id,
                     name: p.itinerary.name,
@@ -458,11 +434,8 @@ app.get('/api/groups/:groupId', async (req, res) => {
     }
 });
 
-// =============================================================
-// 3. ACTIONS (REJOINDRRE / DEMANDES / AJOUT)
-// =============================================================
 
-/** Rejoindre ou demander à rejoindre */
+
 app.post('/api/groups/:groupId/join', async (req, res) => {
     const { groupId } = req.params;
     const { userId } = req.body;
@@ -485,7 +458,6 @@ app.post('/api/groups/:groupId/join', async (req, res) => {
     } catch (e) { res.status(400).json({ error: "Action impossible" }); }
 });
 
-/** [GET] Voir les demandes pour un groupe */
 app.get('/api/groups/:groupId/requests', async (req, res) => {
     try {
         const requests = await prisma.joinRequest.findMany({
@@ -502,7 +474,6 @@ app.get('/api/groups/:groupId/requests', async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
 
-/** [POST] Répondre à une demande */
 app.post('/api/groups/:groupId/requests/:requestId/respond', async (req, res) => {
     const { groupId, requestId } = req.params;
     const { action } = req.body; 
@@ -520,7 +491,8 @@ app.post('/api/groups/:groupId/requests/:requestId/respond', async (req, res) =>
         res.json({ message: "Ok" });
     } catch (e) { res.status(500).json({ error: "Erreur" }); }
 });
-/** [POST] Ajouter un utilisateur à un groupe via son pseudo */
+
+
 app.post('/api/groups/:groupId/add-user', async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -548,7 +520,7 @@ app.post('/api/groups/:groupId/add-user', async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
     console.log("👤 Tentative de création de compte...");
     try {
-        const { username, password, pseudo, email } = req.body; // Récupération des nouveaux champs
+        const { username, password, pseudo, email } = req.body; 
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -556,7 +528,7 @@ app.post('/api/auth/register', async (req, res) => {
             data: { 
                 username, 
                 password: hashedPassword,
-                pseudo: pseudo || username, // Si pas de pseudo fourni, on met l'username par défaut
+                pseudo: pseudo || username,
                 email: email
             }
         });
@@ -572,12 +544,10 @@ app.post('/api/auth/register', async (req, res) => {
 
 
 
-/** [PATCH] Mettre à jour la photo de profil */
 app.patch('/api/auth/profile-picture', upload.single('avatar'), async (req, res) => {
     console.log("🖼️ Mise à jour de la photo de profil...");
     try {
-        const { userId } = req.body; // L'ID de l'utilisateur envoyé par l'app
-
+        const { userId } = req.body; 
         if (!req.file) {
             return res.status(400).json({ error: "Aucune image reçue" });
         }
@@ -608,21 +578,18 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        // 1. Chercher l'utilisateur
         const user = await prisma.user.findUnique({ where: { username } });
         if (!user) {
             console.log("❌ Utilisateur non trouvé");
             return res.status(401).json({ error: "Utilisateur non trouvé" });
         }
 
-        // 2. Vérifier le mot de passe
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) {
             console.log("❌ Mot de passe incorrect");
             return res.status(401).json({ error: "Mot de passe incorrect" });
         }
 
-        // 3. GÉNÉRER LE TOKEN
         const token = jwt.sign(
             { userId: user.id, username: user.username }, 
             JWT_SECRET, 
@@ -631,7 +598,6 @@ app.post('/api/auth/login', async (req, res) => {
 
         console.log(`🔓 Connexion réussie pour : ${username}`);
 
-        // 4. Envoyer la réponse
         res.json({
             message: "Connexion réussie",
             token: token,
@@ -654,7 +620,6 @@ app.post('/api/auth/login', async (req, res) => {
 
 
 
-/** [POST] Ajouter un commentaire à une photo */
 app.post('/api/photos/:photoId/comments', async (req, res) => {
     console.log(`💬 Nouveau commentaire sur la photo ${req.params.photoId}`);
     try {
@@ -671,11 +636,10 @@ app.post('/api/photos/:photoId/comments', async (req, res) => {
                 photoId: parseInt(photoId),
                 authorId: parseInt(userId)
             },
-            include: { author: true } // On inclut l'auteur pour renvoyer le pseudo direct
+            include: { author: true } 
         });
 
-        // On renvoie le commentaire formaté exactement comme le GET
-        // pour que ton app puisse l'ajouter à la liste instantanément
+     
         res.status(201).json({
             id: comment.id,
             text: comment.text,
@@ -690,7 +654,6 @@ app.post('/api/photos/:photoId/comments', async (req, res) => {
     }
 });
 
-/** [GET] Récupérer les commentaires d'une photo */
 app.get('/api/photos/:photoId/comments', async (req, res) => {
     try {
         const { photoId } = req.params;
@@ -717,12 +680,11 @@ app.get('/api/photos/:photoId/comments', async (req, res) => {
 
 app.post('/api/photos/:photoId/like', async (req, res) => {
     const { photoId } = req.params;
-    const { userId } = req.body; // L'ID de l'utilisateur qui clique
+    const { userId } = req.body; 
 
     if (!userId) return res.status(400).json({ error: "ID utilisateur manquant" });
 
     try {
-        // 1. Vérifier si le like existe déjà
         const existingLike = await prisma.like.findUnique({
             where: {
                 userId_photoId: {
@@ -733,7 +695,6 @@ app.post('/api/photos/:photoId/like', async (req, res) => {
         });
 
         if (existingLike) {
-            // OPTION : Si il existe, on le supprime (Like/Unlike)
             await prisma.like.delete({ where: { id: existingLike.id } });
             
             const photo = await prisma.photo.update({
@@ -744,7 +705,6 @@ app.post('/api/photos/:photoId/like', async (req, res) => {
             return res.json({ message: "Like retiré", likes: photo.likesCount, isLiked: false });
         }
 
-        // 2. Sinon, on crée le like et on incrémente le compteur
         const [newLike, updatedPhoto] = await prisma.$transaction([
             prisma.like.create({
                 data: { userId: parseInt(userId), photoId: parseInt(photoId) }
@@ -763,10 +723,6 @@ app.post('/api/photos/:photoId/like', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/places/nearby
- * Récupère les lieux autour de l'utilisateur en temps réel depuis OpenStreetMap
- */
 async function fetchWithRetry(url, data, retries = 2) {
 
     try {
@@ -804,7 +760,6 @@ app.get('/api/places/nearby', async (req, res) => {
             return res.status(400).json({ error: "Coordonnées invalides" });
         }
 
-        // 🔑 Cache (clé arrondie pour éviter trop d'entrées)
         const cacheKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
         if (cache.has(cacheKey)) {
             console.log("⚡ Réponse depuis le cache");
@@ -851,7 +806,6 @@ app.get('/api/places/nearby', async (req, res) => {
                 longitude: el.lon,
             }));
 
-        // 💾 Mise en cache (TTL simple avec setTimeout)
         cache.set(cacheKey, places);
         setTimeout(() => cache.delete(cacheKey), 5 * 60 * 1000); // 5 minutes
 
@@ -869,12 +823,6 @@ app.get('/api/places/nearby', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/places/step-details
- * Recherche approfondie sur un lieu d'étape : Wikipedia + posts communauté
- * Query: name, lat, lon
- * DOIT être déclaré AVANT /api/places/:id pour éviter le conflit de route Express
- */
 app.get('/api/places/step-details', async (req, res) => {
     try {
         const { name, lat, lon } = req.query;
@@ -918,10 +866,7 @@ app.get('/api/places/step-details', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/places/:id
- * Récupère les détails complets d'un lieu (photos, avis, horaires, etc.)
- */
+
 app.get('/api/places/:id', async (req, res) => {
     console.log(`🚨 FONCTION DETAILS LIEU APPELEE - ID: ${req.params.id}`);
     try {
@@ -950,7 +895,6 @@ app.get('/api/places/:id', async (req, res) => {
             }
         }
 
-        // Utiliser API OSM directe (séquentiel pour éviter surcharge)
         console.log(`📡 Requête API OSM directe pour ${numericId}`);
         
         const osmUrls = [
@@ -961,7 +905,6 @@ app.get('/api/places/:id', async (req, res) => {
 
         let element = null;
         
-        // Essayer séquentiellement (node -> way -> relation) pour éviter surcharge
         for (const url of osmUrls) {
             try {
                 console.log(`🔍 Tentative ${url}`);
@@ -972,7 +915,7 @@ app.get('/api/places/:id', async (req, res) => {
                 if (data) {
                     console.log(`🔍 Data extraite ${type}: présente`);
                     element = { ...data, osm_type: type };
-                    break; // On s'arrête au premier succès
+                    break;
                 } else {
                     console.log(`🔍 Data extraite ${type}: absente`);
                 }
@@ -986,7 +929,8 @@ app.get('/api/places/:id', async (req, res) => {
             return res.status(404).json({ error: "Lieu non trouvé" });
         }
 
-        // Pour les ways, récupérer les coordonnées du premier node comme approximation
+
+
         if (element.osm_type === 'way' && element.nodes && element.nodes.length > 0) {
             console.log(`🏗️ Way détectée, récupération coordonnées du premier node ${element.nodes[0]}`);
             try {
@@ -1004,7 +948,6 @@ app.get('/api/places/:id', async (req, res) => {
 
         const tags = element.tags || {};
         
-        // Récupérer les coordonnées selon le type
         let latitude = element.lat;
         let longitude = element.lon;
 
@@ -1015,7 +958,6 @@ app.get('/api/places/:id', async (req, res) => {
 
         console.log(`📍 Coordonnées: ${latitude}, ${longitude}`);
 
-        // Construction de l'objet lieu détaillé
         const placeDetails = {
             id: element.id.toString(),
             name: tags.name || "Nom inconnu",
@@ -1043,14 +985,13 @@ app.get('/api/places/:id', async (req, res) => {
             isOpenNow: computeIsOpenNow(tags.opening_hours || null),
             wikiSummary: null,
             wikiImage: null,
-            osm_tags: tags, // Tous les tags OSM bruts
+            osm_tags: tags, 
             photos: [],
             reviews: []
         };
 
         console.log(`📝 Objet placeDetails construit: ${placeDetails.name} (${placeDetails.type})`);
 
-        // Tentative de récupération de photos depuis Wikimedia Commons (tous les lieux nommés)
         if (tags.name) {
             console.log(`🖼️ Recherche de photos Wikimedia pour: ${tags.name}`);
             try {
@@ -1060,7 +1001,7 @@ app.get('/api/places/:id', async (req, res) => {
                 if (commonsResponse.data.query && commonsResponse.data.query.pages) {
                     const photos = Object.values(commonsResponse.data.query.pages)
                         .slice(0, 5) // Limiter à 5 photos
-                        .filter(page => page.imageinfo && page.imageinfo[0]) // Vérifier que imageinfo existe
+                        .filter(page => page.imageinfo && page.imageinfo[0]) 
                         .map(page => ({
                             url: page.imageinfo[0].url,
                             thumb: page.imageinfo[0].thumburl || page.imageinfo[0].url,
@@ -1075,7 +1016,6 @@ app.get('/api/places/:id', async (req, res) => {
                 console.log(`ℹ️ Erreur récupération photos Wikimedia: ${photoError.message}`);
             }
 
-            // Récupération infos Wikipedia
             try {
                 const wikiInfo = await fetchWikipediaInfo(tags.name);
                 placeDetails.wikiSummary = wikiInfo?.summary || null;
@@ -1091,7 +1031,6 @@ app.get('/api/places/:id', async (req, res) => {
         console.log(`📍 Détails complets récupérés pour le lieu ${id}: ${placeDetails.name}`);
         console.log(`📤 Envoi réponse avec ${placeDetails.photos ? placeDetails.photos.length : 0} photos`);
         
-        // Stocker en cache
         placeDetailsCache.set(numericId, {
             data: placeDetails,
             timestamp: Date.now()
@@ -1145,11 +1084,6 @@ function formatInstruction(type, modifier, name) {
     }
 }
 
-/**
- * [GET] /api/route
- * Retourne un trajet de A vers B avec points, distance et duration.
- * Requête attendue : /api/route?startLat=...&startLon=...&endLat=...&endLon=...
- */
 app.get('/api/route', async (req, res) => {
     try {
         console.log("REQ QUERY:", req.query);
@@ -1191,7 +1125,6 @@ app.get('/api/route', async (req, res) => {
         const coords = route.geometry.coordinates || [];
         const points = coords.map(([lon, lat]) => ({ latitude: lat, longitude: lon }));
 
-        // Parse steps for turn-by-turn instructions
         const rawSteps = route.legs ? route.legs.flatMap(leg => leg.steps || []) : [];
         const instructions = rawSteps.map(step => {
             const type = step.maneuver?.type || 'straight';
@@ -1248,10 +1181,6 @@ app.patch('/api/groups/:groupId/role', async (req, res) => {
 
 
 
-// ─────────────────────────────────────────────────────────
-// ITINÉRAIRES
-// ─────────────────────────────────────────────────────────
-
 function haversine(lat1, lon1, lat2, lon2) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -1261,18 +1190,15 @@ function haversine(lat1, lon1, lat2, lon2) {
     return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// Effort modéré = marche 5 km/h, Gros effort = jogging 8 km/h
-const MODE_SPEED = { walking: 83, jogging: 133, driving: 500 }; // m/min
-const VISIT_TIME = 20; // min par POI
+const MODE_SPEED = { walking: 83, jogging: 133, driving: 500 }; 
+const VISIT_TIME = 20; 
 
-// Facteur de Tobler normalisé : 1.0 sur terrain plat, < 1 en montée/descente forte
 function toblerFactor(elevDiff, distM) {
     if (distM < 1) return 1;
     const slope = elevDiff / distM;
     return Math.max(Math.exp(-3.5 * Math.abs(slope + 0.05)) / 0.8408, 0.3);
 }
 
-// Récupère les altitudes via OpenTopoData (fallback = 0 si indisponible)
 async function getElevations(coords) {
     if (coords.length === 0) return [];
     try {
@@ -1283,7 +1209,7 @@ async function getElevations(coords) {
         );
         return (resp.data.results || []).map(r => r.elevation || 0);
     } catch {
-        return coords.map(() => 0); // terrain plat par défaut
+        return coords.map(() => 0); 
     }
 }
 
@@ -1294,7 +1220,6 @@ function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed,
     const pool = [...poisPool];
     let totalDist = 0;
 
-    // Visit forced locations first, in nearest-neighbor order
     const mustPool = [...mustVisit];
     while (mustPool.length > 0) {
         let bestIdx = -1, bestDist = Infinity;
@@ -1310,7 +1235,6 @@ function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed,
         steps.push({ name: poi.name, type: poi.type, lat: poi.lat, lon: poi.lon, openingHours: poi.openingHours || null, avgCost: poi.avgCost || 0, costIsReal: poi.costIsReal || false });
         totalDist += bestDist;
         curLat = poi.lat; curLon = poi.lon; curElev = poi.elev || 0;
-        // Remove from optional pool if present
         const idx = pool.findIndex(p => p.lat === poi.lat && p.lon === poi.lon);
         if (idx !== -1) pool.splice(idx, 1);
     }
@@ -1335,9 +1259,6 @@ function buildRoute(poisPool, startLat, startLon, startElev, durationMin, speed,
     return { steps, totalDist: Math.round(totalDist), usedMin: Math.round(durationMin - remaining) };
 }
 
-// Vérifie si un lieu est ouvert pendant un créneau horaire donné (aujourd'hui)
-// timeSlot: 'matin' | 'après-midi' | 'soir' | 'all'
-// Retourne true si pas d'horaires renseignés (bénéfice du doute)
 function isOpenDuringSlot(opening_hours_str, timeSlot) {
     if (!opening_hours_str) return true;
     const str = opening_hours_str.trim();
@@ -1369,7 +1290,7 @@ function isOpenDuringSlot(opening_hours_str, timeSlot) {
             }
             if (todayMatch) return slotMinute >= startMin && slotMinute < endMin;
         }
-        return true; // pas de segment pour aujourd'hui → inclure
+        return true;
     } catch { return true; }
 }
 
@@ -1380,11 +1301,10 @@ function computeIsOpenNow(opening_hours_str) {
     try {
         const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
         const now = new Date();
-        const todayIdx = now.getDay(); // 0=Sun
+        const todayIdx = now.getDay(); 
         const todayCode = DAYS[todayIdx];
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-        // Parse patterns like "Mo-Fr 09:00-18:00" or "Mo-Su 08:00-20:00; Tu off"
         const segments = str.split(';').map(s => s.trim()).filter(Boolean);
         for (const segment of segments) {
             const match = segment.match(/^([A-Za-z,\-]+)\s+(\d{2}:\d{2})-(\d{2}:\d{2})$/);
@@ -1395,7 +1315,6 @@ function computeIsOpenNow(opening_hours_str) {
             const startMin = startTime[0] * 60 + startTime[1];
             const endMin = endTime[0] * 60 + endTime[1];
 
-            // Check if today is in the day range
             let todayMatch = false;
             const dayRanges = daysPart.split(',');
             for (const range of dayRanges) {
@@ -1407,7 +1326,6 @@ function computeIsOpenNow(opening_hours_str) {
                     if (fromIdx <= toIdx) {
                         if (todayIdx >= fromIdx && todayIdx <= toIdx) todayMatch = true;
                     } else {
-                        // Wrap-around (e.g. Fr-Su)
                         if (todayIdx >= fromIdx || todayIdx <= toIdx) todayMatch = true;
                     }
                 } else {
@@ -1449,7 +1367,6 @@ async function fetchWikipediaInfo(name) {
     return info;
 }
 
-// WMO weather code → libellé français
 function weatherLabel(code) {
     if (code === 0) return "Ensoleillé";
     if (code <= 2) return "Peu nuageux";
@@ -1499,18 +1416,16 @@ async function getWeatherForecast(lat, lon) {
     }
 }
 
-// Parse un tag OSM de type "charge" ou "entrance_fee" → nombre en euros ou null
 function parseChargeStr(str) {
     if (!str) return null;
     const lower = str.toLowerCase().trim();
     if (lower === 'free' || lower === 'no' || lower === '0') return 0;
-    if (lower === 'yes') return null; // payant mais montant inconnu
+    if (lower === 'yes') return null; 
     const match = str.match(/(\d+(?:[.,]\d+)?)/);
     if (match) return Math.round(parseFloat(match[1].replace(',', '.')));
     return null;
 }
 
-// Parse price_range / price_level ("$" → 5, "$$" → 12, "$$$" → 25, "$$$$" → 40, ou 1-4)
 function parsePriceRangeStr(str) {
     if (!str) return null;
     const t = str.trim();
@@ -1521,7 +1436,6 @@ function parsePriceRangeStr(str) {
     return null;
 }
 
-// Retourne { cost: number, isReal: boolean } en cherchant les vrais tags OSM en priorité
 function resolveOsmCost(tags, fallbackEstimate) {
     let cost = parseChargeStr(tags['charge']);
     if (cost !== null) return { cost, isReal: true };
@@ -1533,10 +1447,6 @@ function resolveOsmCost(tags, fallbackEstimate) {
     return { cost: fallbackEstimate, isReal: false };
 }
 
-/**
- * [POST] /api/itineraries/generate
- * Body: { locations, durationMinutes, mode, activities, wantsGoodWeather?, budget?, effortLevel?, weatherSensitivity?, timeSlot? }
- */
 app.post('/api/itineraries/generate', async (req, res) => {
     try {
         const { locations, durationMinutes, mode, activities, wantsGoodWeather, budget, effortLevel, weatherSensitivity, timeSlot } = req.body;
@@ -1544,22 +1454,17 @@ app.post('/api/itineraries/generate', async (req, res) => {
             return res.status(400).json({ error: "Au moins un lieu requis" });
         }
 
-        // Centre de départ = premier lieu (pour la recherche OSM)
         const startLat = locations[0].lat;
         const startLon = locations[0].lon;
         const duration = parseInt(durationMinutes) || 60;
         const speed = MODE_SPEED[mode] || MODE_SPEED.walking;
 
-        // Rayon OSM : assez grand pour couvrir tous les lieux forcés + marge de remplissage
         let radius = Math.min(speed * (duration / 2), 2000);
         if (locations.length > 1) {
             const maxForcedDist = Math.max(...locations.map(l => haversine(startLat, startLon, l.lat, l.lon)));
             radius = Math.min(Math.max(radius, maxForcedDist + 500), 5000);
         }
-
-        // Tous les lieux ajoutés explicitement sont des étapes obligatoires à visiter
-        // "Ma position" est exclu : c'est juste le point de départ, pas un lieu à visiter
-        const forcedLocations = locations
+      const forcedLocations = locations
             .filter(loc => loc.name !== 'Ma position')
             .map(loc => ({
                 name: loc.name,
@@ -1647,38 +1552,29 @@ app.post('/api/itineraries/generate', async (req, res) => {
             return res.status(404).json({ error: "Aucun lieu trouvé dans cette zone. Essayez un rayon plus large ou d'autres activités." });
         }
 
-        // Filtrer les POIs fermés pendant le créneau demandé
-        // (uniquement ceux qui ont des horaires renseignés et sont définitivement fermés)
         if (timeSlot && timeSlot !== 'all') {
             const filtered = pois.filter(p => isOpenDuringSlot(p.openingHours, timeSlot));
-            // Ne pas filtrer si ça vide complètement la liste (trop de lieux sans horaires OSM)
             if (filtered.length > 0) pois.splice(0, pois.length, ...filtered);
         }
 
-        // Prioritize indoor POIs if weather-sensitive
         if (weatherSensitivity && weatherSensitivity.length > 0) {
             pois.sort((a, b) => (b.isIndoor ? 1 : 0) - (a.isIndoor ? 1 : 0));
         }
 
-        // Récupérer les altitudes pour tous les POIs
         const poisCoords = pois.map(p => [p.lat, p.lon]);
         const elevations = await getElevations(poisCoords);
         pois.forEach((p, i) => { p.elev = elevations[i] || 0; });
 
-        // Récupérer les altitudes pour les lieux forcés
         if (forcedLocations.length > 0) {
             const forcedCoords = forcedLocations.map(p => [p.lat, p.lon]);
             const forcedElevations = await getElevations(forcedCoords);
             forcedLocations.forEach((p, i) => { p.elev = forcedElevations[i] || 0; });
         }
 
-        // Effort level → max step distance
         const maxStepDist = effortLevel === 'minimal' ? 300 : effortLevel === 'reduced' ? 600 : Infinity;
 
-        // Variante 1 – Mix : tous les POIs, greedy nearest-neighbor
         const v1 = buildRoute(pois, startLat, startLon, 0, duration, speed, maxStepDist, forcedLocations);
 
-        // Variante 2 – Thématique : catégorie principale en priorité
         const primaryCategory = (activities && activities.length > 0) ? activities[0] : 'Culture';
         const primaryPois = pois.filter(p => p.category === primaryCategory);
         const secondaryPois = pois.filter(p => p.category !== primaryCategory);
@@ -1687,7 +1583,6 @@ app.post('/api/itineraries/generate', async (req, res) => {
             startLat, startLon, 0, duration, speed, maxStepDist, forcedLocations
         );
 
-        // Variante 3 – Panoramique : max 2 POIs par catégorie (variété forcée)
         const byCategory = {};
         for (const p of pois) {
             if (!byCategory[p.category]) byCategory[p.category] = [];
@@ -1714,7 +1609,6 @@ app.post('/api/itineraries/generate', async (req, res) => {
             return res.status(404).json({ error: "Pas assez de temps ou de lieux pour créer un itinéraire" });
         }
 
-        // Fetch Wikipedia thumbnails — chaque nom a son propre timeout pour ne pas bloquer les autres
         const uniqueStepNames = [...new Set(variants.flatMap(v => v.steps.map(s => s.name)))];
         const withTimeout = (promise, ms) =>
             Promise.race([promise, new Promise(resolve => setTimeout(() => resolve(null), ms))]);
@@ -1729,8 +1623,7 @@ app.post('/api/itineraries/generate', async (req, res) => {
             photoMap[name] = r?.status === 'fulfilled' ? (r.value ?? null) : null;
         });
 
-        // Fetch community post photos near each unique step position
-        const RADIUS = 0.005; // ~500m
+        const RADIUS = 0.005; 
         const uniqueStepPositions = [...new Map(
             variants.flatMap(v => v.steps).map(s => [`${s.lat.toFixed(3)},${s.lon.toFixed(3)}`, s])
         ).values()];
@@ -1757,7 +1650,6 @@ app.post('/api/itineraries/generate', async (req, res) => {
                 : [];
         });
 
-        // Enrich variants with photos and compute metrics
         const budgetMax = parseInt(budget) || 0;
         variants.forEach(v => {
             v.steps.forEach(s => {
@@ -1776,7 +1668,6 @@ app.post('/api/itineraries/generate', async (req, res) => {
                 : v.effortScore <= 2 ? 'matin' : 'après-midi';
         });
 
-        // Filter variants exceeding budget (only if budget specified)
         const filteredVariants = budgetMax > 0
             ? variants.filter(v => v.estimatedBudget <= budgetMax)
             : variants;
@@ -1802,10 +1693,6 @@ app.post('/api/itineraries/generate', async (req, res) => {
     }
 });
 
-/**
- * [POST] /api/itineraries/save
- * Body: { userId, name, duration, distance, mode, steps:[{name,type,lat,lon}] }
- */
 app.post('/api/itineraries/save', async (req, res) => {
     try {
         const { userId, name, duration, distance, mode, steps } = req.body;
@@ -1839,9 +1726,7 @@ app.post('/api/itineraries/save', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/users/:userId/itineraries
- */
+
 app.get('/api/users/:userId/itineraries', async (req, res) => {
     try {
         const { userId } = req.params;
@@ -1865,11 +1750,6 @@ app.get('/api/users/:userId/itineraries', async (req, res) => {
     }
 });
 
-/**
- * [PATCH] /api/itineraries/:id
- * Met à jour l'ordre/contenu des étapes d'un itinéraire existant
- * Body: { name, steps:[{name,type,latitude,longitude}] }
- */
 app.patch('/api/itineraries/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -1903,10 +1783,6 @@ app.patch('/api/itineraries/:id', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/itineraries/:id
- * Retourne l'itinéraire complet avec toutes ses étapes (lat/lon inclus)
- */
 app.get('/api/itineraries/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -1922,11 +1798,6 @@ app.get('/api/itineraries/:id', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/route/multi
- * Calcule un trajet multi-étapes via OSRM
- * Query: waypoints=lat1,lon1;lat2,lon2;... & mode=walking|jogging|driving
- */
 app.get('/api/route/multi', async (req, res) => {
     try {
         const { waypoints, mode } = req.query;
@@ -1962,18 +1833,10 @@ app.get('/api/route/multi', async (req, res) => {
     }
 });
 
-/**
- * [POST] /api/itineraries/:id/share
- * Crée un post public lié à cet itinéraire
- * Body: { userId, description }
- *//**
- * [POST] /api/itineraries/:id/share
- * Crée un post lié à cet itinéraire (Public ou pour un Groupe)
- */
+
 app.post('/api/itineraries/:id/share', async (req, res) => {
     try {
         const { id } = req.params;
-        // On récupère isPublic et groupId envoyés par l'app
         const { userId, description, isPublic, groupId } = req.body;
         
         if (!userId) return res.status(400).json({ error: "userId requis" });
@@ -1987,15 +1850,13 @@ app.post('/api/itineraries/:id/share', async (req, res) => {
 
         const firstStep = itinerary.steps[0];
         
-        // Création du post (photo) lié à l'itinéraire
         const photo = await prisma.photo.create({
             data: {
-                url: '', // Pas d'image physique, le client affichera la preview de l'itinéraire
+                url: '', 
                 description: description || `Itinéraire : ${itinerary.name}`,
                 type_lieu: itinerary.name,
                 latitude: firstStep?.latitude || 0,
                 longitude: firstStep?.longitude || 0,
-                // Utilisation des nouvelles valeurs
                 is_public: isPublic === undefined ? true : isPublic, 
                 groupId: groupId ? parseInt(groupId) : null,
                 authorId: parseInt(userId),
@@ -2034,11 +1895,7 @@ app.post('/api/itineraries/:id/share', async (req, res) => {
         res.status(500).json({ error: "Erreur serveur" });
     }
 });
-/**
- * [POST] /api/itineraries/:id/copy
- * Copie un itinéraire dans la liste de l'utilisateur
- * Body: { userId }
- */
+
 app.post('/api/itineraries/:id/copy', async (req, res) => {
     try {
         const { id } = req.params;
@@ -2080,10 +1937,6 @@ app.post('/api/itineraries/:id/copy', async (req, res) => {
     }
 });
 
-/**
- * [GET] /api/itineraries/:id/pdf
- * Génère et retourne un PDF de l'itinéraire
- */
 app.get('/api/itineraries/:id/pdf', async (req, res) => {
     try {
         const { id } = req.params;
@@ -2109,11 +1962,9 @@ app.get('/api/itineraries/:id/pdf', async (req, res) => {
         );
         doc.moveDown(0.8);
 
-        // Ligne de séparation
         doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#CCCCCC').stroke();
         doc.moveDown(0.6);
 
-        // Infos générales
         const modeLbl = itinerary.mode === 'jogging' ? 'Gros effort (jogging)' : 'Effort modéré (marche)';
         const distKm = (itinerary.distance / 1000).toFixed(1);
         doc.fontSize(12).fillColor('#333333');
@@ -2122,7 +1973,6 @@ app.get('/api/itineraries/:id/pdf', async (req, res) => {
         doc.text(`   •   Mode : ${modeLbl}`);
         doc.moveDown(1);
 
-        // Étapes
         doc.fontSize(14).fillColor('#5C3D91').text('Étapes de l\'itinéraire', { underline: true });
         doc.moveDown(0.5);
 
@@ -2153,7 +2003,6 @@ app.get('/api/itineraries/:id/pdf', async (req, res) => {
     }
 });
 
-// ── User Search ────────────────────────────────────────────────────────────────
 app.get('/api/users/search', async (req, res) => {
     const { query } = req.query;
     if (!query || query.trim().length < 1) return res.json([]);
@@ -2187,7 +2036,6 @@ app.get('/api/users/search', async (req, res) => {
     }
 });
 
-// ── Public User Profile ─────────────────────────────────────────────────────
 app.get('/api/users/:userId/profile', async (req, res) => {
     const userId = parseInt(req.params.userId);
     const followerId = req.query.followerId ? parseInt(req.query.followerId) : null;
@@ -2258,7 +2106,6 @@ app.get('/api/users/:userId/profile', async (req, res) => {
     }
 });
 
-// ── Follow / Unfollow ────────────────────────────────────────────────────────
 app.post('/api/users/:userId/follow', async (req, res) => {
     const followingId = parseInt(req.params.userId);
     const followerId = parseInt(req.body.followerId);
@@ -2307,7 +2154,6 @@ app.put('/api/users/:userId/follow/notify', async (req, res) => {
     }
 });
 
-// ── Notifications ────────────────────────────────────────────────────────────
 app.get('/api/users/:userId/notifications', async (req, res) => {
     const userId = parseInt(req.params.userId);
     if (isNaN(userId)) return res.status(400).json({ error: "userId invalide" });
@@ -2320,7 +2166,6 @@ app.get('/api/users/:userId/notifications', async (req, res) => {
                 from: { select: { id: true, username: true, pseudo: true, profileUrl: true } }
             }
         });
-        // Charger les groupIds pour les notifs event_soon
         const eventIds = notifications.filter(n => n.type === 'event_soon' && n.eventId).map(n => n.eventId);
         const events = eventIds.length > 0
             ? await prisma.event.findMany({ where: { id: { in: eventIds } }, select: { id: true, groupId: true, title: true } })
@@ -2358,7 +2203,6 @@ app.put('/api/notifications/read-all', async (req, res) => {
     }
 });
 
-// ── Events ───────────────────────────────────────────────────────────────────
 app.get('/api/groups/:groupId/events', async (req, res) => {
     const groupId = parseInt(req.params.groupId);
     const userId = req.query.userId ? parseInt(req.query.userId) : null;
@@ -2414,7 +2258,6 @@ app.post('/api/groups/:groupId/events', async (req, res) => {
     if (isNaN(groupId) || !startAt || !createdById) return res.status(400).json({ error: "Champs manquants" });
 
     try {
-        // Vérifier que l'utilisateur est admin
         const membership = await prisma.groupMember.findUnique({
             where: { userId_groupId: { userId: parseInt(createdById), groupId } }
         });
@@ -2495,7 +2338,6 @@ app.delete('/api/events/:eventId/interest', async (req, res) => {
     }
 });
 
-// ── Job : notifier 1h avant chaque événement ─────────────────────────────────
 setInterval(async () => {
     try {
         const now = new Date();
@@ -2523,12 +2365,7 @@ setInterval(async () => {
     }
 }, 60 * 1000);
 
-// --- TAGS IA (Gemini) ---
 
-/**
- * [POST] /api/ai/suggest-tags
- * Body: { placeName: string }
- */
 app.post('/api/ai/suggest-tags', async (req, res) => {
     try {
         const apiKey = process.env.GEMINI_API_KEY;
@@ -2564,9 +2401,7 @@ app.post('/api/ai/suggest-tags', async (req, res) => {
     }
 });
 
-// --- SIGNALEMENTS ---
 
-/** [POST] /api/photos/:photoId/report — Signaler un post */
 app.post('/api/photos/:photoId/report', async (req, res) => {
     try {
         const photoId = parseInt(req.params.photoId);
@@ -2584,7 +2419,6 @@ app.post('/api/photos/:photoId/report', async (req, res) => {
     }
 });
 
-/** [GET] /api/admin/reports — Liste des posts signalés triés par nombre de signalements (admin only) */
 app.get('/api/admin/reports', async (req, res) => {
     try {
         const { userId } = req.query;
@@ -2620,7 +2454,6 @@ app.get('/api/admin/reports', async (req, res) => {
     }
 });
 
-/** [DELETE] /api/admin/photos/:photoId — Supprimer un post (admin only) */
 app.delete('/api/admin/photos/:photoId', async (req, res) => {
     try {
         const { userId } = req.query;
@@ -2640,7 +2473,6 @@ app.delete('/api/admin/photos/:photoId', async (req, res) => {
     }
 });
 
-// Lancement
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`-------------------------------------------`);
     console.log(`🚀 Serveur Traveling opérationnel !`);
